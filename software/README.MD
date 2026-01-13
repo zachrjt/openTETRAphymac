@@ -1,0 +1,1 @@
+Contains the python module and associated tests for simulating TETRA V1.0 (per EN 300 393-2 2.4.2) MAC and physical layers

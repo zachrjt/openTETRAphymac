@@ -40,6 +40,10 @@ CASES = [
     (lc.SCH_HU, {}, 1),
     (lc.AACH, {}, 1),
     (lc.STCH, {}, 1),
+
+    # Linearization channels
+    (lc.BLCH, {}, 1),
+    (lc.CLCH, {}, 1),
 ]
 
 def _assignArguments(case):

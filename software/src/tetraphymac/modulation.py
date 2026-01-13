@@ -34,15 +34,17 @@ def calculatePhaseAdjustmentBits(inputData: NDArray[uint8],
     assert inputData.size % 2 == 0 # must have even number of bits
 
     # reshape to have even and odd bits [b0, b1], also skip the first guardOffset bits to get to data 
-    bitPairs = inputData[guardOffset:].reshape(-1,2)
+    bitPairs = inputData[guardOffset:]
+    bitPairs = bitPairs[inclusiveIndices[0]*2:(inclusiveIndices[1]*2)+2].reshape(-1,2)
 
     # map the even odd bits into a 4-entry code to map phase transistion quickly from LUT
     codedTransistions = (bitPairs[:, 0] << 1 ) | bitPairs[:, 1] # maps into value [b0b1, b2b3, ...]
     
     # grayTransistion -> 0=0b00, 1=0b01, 2=0b10, 3=0b11, lookup the phase transistion from table
-    dphi = DQPSK_PHASE_TRANSITION_LUT[codedTransistions]
+    dphi = DQPSK_PHASE_TRANSITION_LUT[codedTransistions] # if you get an out of range here, then your indices are off, 
+                                                         # reading random (0-255) values in the unset phase adjustment bits
 
-    phiAccumulated = float64(sum(dphi[inclusiveIndices[0]:inclusiveIndices[1]+1]))
+    phiAccumulated = float64(sum(dphi))
 
     resultantAngle = mod(-phiAccumulated, (2*pi))
     if resultantAngle > pi:
@@ -53,3 +55,15 @@ def calculatePhaseAdjustmentBits(inputData: NDArray[uint8],
     bits = array([(resultantBitPair >> 1) & 1, resultantBitPair & 1],dtype=uint8)
 
     return bits
+
+def generateBurstIQData():
+    # TODO: implement the burst sampling
+    # 1. zero pad, oversample, manage guard period IQ data for ramping if enabled
+    # 2. RRC filter 
+    # 3. Apply ramping envelope as required to end and start
+    raise NotImplementedError
+
+
+def dqpskDemodulator():
+    # TODO: implement demodulator
+    raise NotImplementedError
