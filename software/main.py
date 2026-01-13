@@ -2,7 +2,7 @@
 import src.tetraphymac.logical_channels as lc
 
 def main():
-
+    
     tx_v_d_channel = lc.TCH_4_8(N=1)
     tx_v_d_channel.encodeType5Bits([tx_v_d_channel.generateRndInput() for _ in range(2)])
 

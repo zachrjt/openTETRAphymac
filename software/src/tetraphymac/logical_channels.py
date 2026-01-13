@@ -1,35 +1,13 @@
 # ZT - 2026
 # Based on EN 300 392-2 V2.4.2
 from typing import List
-from random import randint
+from numpy.random import randint
 from abc import ABC, abstractmethod
-from .coding_scrambling import *
+from .constants import SlotLength, ChannelKind, ChannelName
+from .coding_scrambling import crc16Decoder, crc16Encoder, rcpcDecoder, rcpcEncoder, rm3014Decoder, rm3014Encoder, blockDeInterleaver
+from .coding_scrambling import descrambler, nBlockInterleaver, blockInterleaver, nBlockDeInterleaver, scrambler
 
-# TODO: rewrite constant strs into enums
 # TODO: rewrite block building to numpy ndarrays allocation, abstract the building
-HALF_SUBSLOT = "half"
-FULL_SUBSLOT = "full"
-
-TRAFFIC_TYPE = "traffic"
-CONTROL_TYPE = "control"
-LINEARIZATION_TYPE = "linear"
-
-# Channel variable names for MAC burst building
-BNCH_CHANNEL = "BNCH"
-BSCH_CHANNEL = "BSCH"
-SCH_CHANNEL = "SCH"
-SCH_F_CHANNEL = "SCH/F"
-SCH_HD_CHANNEL = "SCH/HD"
-SCH_HU_CHANNEL = "SCH/HU"
-AACH_CHANNEL = "AACH"
-STCH_CHANNEL = "STCH"
-TCH_CHANNEL = "TCH"
-TCH_S_CHANNEL = "TCH/S"
-TCH_7_2_CHANNEL = "TCH/7.2"
-TCH_4_8_CHANNEL = "TCH/4.8"
-TCH_2_4_CHANNEL = "TCH/2.4"
-CLCH_CHANNEL = "CLCH"
-BLCH_CHANNEL = "BLCH"
 
 class LogicalChannel_VD(ABC):
     '''
@@ -56,9 +34,7 @@ class LogicalChannel_VD(ABC):
     K1 = 0            # Number of input bits per block
     K5 = 0            # Number of output bits per block
 
-    CRC = 0           # 
-
-    
+    CRC = 0
 
     @abstractmethod
     def __init__(self):
@@ -109,7 +85,7 @@ class LogicalChannel_VD(ABC):
 class ControlChannel(LogicalChannel_VD):
 
     def __init__(self):
-        self.channelType = CONTROL_TYPE
+        self.channelType = ChannelKind.CONTROL_TYPE
     
     def generateRndInput(self):
         return [randint(0,1) for _ in range(self.K1)]
@@ -135,7 +111,7 @@ class BNCH(BCCH):
         super().__init__(*args, **kwargs)
         self.K1 = 124
         self.K5 = 216
-        self.channel = BNCH_CHANNEL
+        self.channel = ChannelName.BNCH_CHANNEL
     
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -171,7 +147,7 @@ class BSCH(BCCH):
         super().__init__(*args, **kwargs)
         self.K1 = 60
         self.K5 = 120
-        self.channel = BSCH_CHANNEL
+        self.channel = ChannelName.BSCH_CHANNEL
 
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -225,7 +201,7 @@ class SCH_F(SCH):
         super().__init__(*args, **kwargs)
         self.K1 = 268
         self.K5 = 432
-        self.channel = SCH_F_CHANNEL
+        self.channel = ChannelName.SCH_F_CHANNEL
 
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -261,7 +237,7 @@ class SCH_HD(SCH):
         super().__init__(*args, **kwargs)
         self.K1 = 124
         self.K5 = 216
-        self.channel = SCH_HD_CHANNEL
+        self.channel = ChannelName.SCH_HD_CHANNEL
     
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -298,7 +274,7 @@ class SCH_HU(SCH):
         super().__init__(*args, **kwargs)
         self.K1 = 92
         self.K5 = 168
-        self.channel = SCH_HU_CHANNEL
+        self.channel = ChannelName.SCH_HU_CHANNEL
     
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -336,7 +312,7 @@ class AACH(ControlChannel):
         super().__init__(*args, **kwargs)
         self.K1 = 14
         self.K5 = 30
-        self.channel = AACH_CHANNEL
+        self.channel = ChannelName.AACH_CHANNEL
 
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -369,7 +345,7 @@ class STCH(ControlChannel):
         super().__init__(*args, **kwargs)
         self.K1 = 124
         self.K5 = 216
-        self.channel = STCH_CHANNEL
+        self.channel = ChannelName.STCH_CHANNEL
 
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -400,9 +376,9 @@ class STCH(ControlChannel):
 
 class TrafficChannel(LogicalChannel_VD):
     N = 1
-    def __init__(self, N:int, *args, **kwargs):
+    def __init__(self, N:int=1, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.channelType = TRAFFIC_TYPE
+        self.channelType = ChannelKind.TRAFFIC_TYPE
         self.N = N
         self.K5 = 432
         if self.N not in [1,2,4,8]:
@@ -419,26 +395,28 @@ class TCH_S(TrafficChannel):
     '''
     slotLength = ""
 
-    def __init__(self, slotLength:str, *args, **kwargs):
+    def __init__(self, slotLength:str=SlotLength.FULL_SUBSLOT, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.slotLength = slotLength
-        if self.slotLength != HALF_SUBSLOT and self.slotLength != FULL_SUBSLOT:
+        if self.slotLength != SlotLength.HALF_SUBSLOT and self.slotLength != SlotLength.FULL_SUBSLOT:
             raise ValueError (f"The passed slot length value of {self.slotLength} is not of: 'half' or 'full' ")
         if self.N not in [1]:
             raise ValueError (f"The passed N - interleaving value of {self.N} is not valid for {self.__class__.__name__}")
-        self.K1 = 432 if self.slotLength == FULL_SUBSLOT else 216
-        self.K5 = 432 if self.slotLength == FULL_SUBSLOT else 216
+        self.K1 = 432 if self.slotLength == SlotLength.FULL_SUBSLOT else 216
+        self.K5 = 432 if self.slotLength == SlotLength.FULL_SUBSLOT else 216
+        self.channel = ChannelName.TCH_S_CHANNEL
+
 
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
-        if self.slotLength == FULL_SUBSLOT:
+        if self.slotLength == SlotLength.FULL_SUBSLOT:
             self.type4Blocks = inputDataBlocks
             self.type5Blocks = []
             for i in range(self.M):
                 self.type5Blocks.append(scrambler(self.type4Blocks[i]))
-        elif self.slotLength == HALF_SUBSLOT:
+        elif self.slotLength == SlotLength.HALF_SUBSLOT:
             self.type3Blocks = inputDataBlocks
             self.type4Blocks = []
             self.type5Blocks = []
@@ -456,12 +434,12 @@ class TCH_S(TrafficChannel):
         self.type3Blocks = []
         for i in range(self.M):
             self.type4Blocks.append(descrambler(self.type5Blocks[i]))
-            if self.slotLength == HALF_SUBSLOT:
+            if self.slotLength == SlotLength.HALF_SUBSLOT:
                 self.type3Blocks.append(blockDeInterleaver(self.type4Blocks[-1],216,101))
         
-        if self.slotLength == FULL_SUBSLOT:
+        if self.slotLength == SlotLength.FULL_SUBSLOT:
             self.type1Blocks = self.type4Blocks
-        elif self.slotLength == HALF_SUBSLOT:
+        elif self.slotLength == SlotLength.HALF_SUBSLOT:
             self.type1Blocks = self.type3Blocks
         
         self.validateKLength(1)
@@ -469,7 +447,7 @@ class TCH_S(TrafficChannel):
     def stealBlockA(self):
         # in the case we are allocating bursts and we must steal a traffic channel with a full slot TCH/S, we must remap into a half one
         # this method just remaps an existing full slot TCH/S into a halve one, discarding block A bits
-        self.slotLength = HALF_SUBSLOT
+        self.slotLength = SlotLength.HALF_SUBSLOT
         self.K1 = 216
         self.K5 = 216
         self.type1Blocks[:216] = self.type1Blocks[216:432]
@@ -487,7 +465,7 @@ class TCH_7_2(TrafficChannel):
         if self.N not in [1]:
             raise ValueError (f"The passed N - interleaving value of {self.N} is not valid for {self.__class__.__name__}")
         self.K1 = 432
-        self.channel = TCH_7_2_CHANNEL
+        self.channel = ChannelName.TCH_7_2_CHANNEL
 
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -525,7 +503,7 @@ class TCH_4_8(TrafficChannel):
         if self.N not in [1,4,8]:
             raise ValueError (f"The passed N - interleaving value of {self.N} is not valid for {self.__class__.__name__}")
         self.K1 = 288
-        self.channel = TCH_4_8_CHANNEL
+        self.channel = ChannelName.TCH_4_8_CHANNEL
 
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -579,7 +557,7 @@ class TCH_2_4(TrafficChannel):
         if self.N not in [1,4,8]:
             raise ValueError (f"The passed N - interleaving value of {self.N} is not valid for {self.__class__.__name__}")
         self.K1 = 144
-        self.channel = TCH_2_4_CHANNEL
+        self.channel = ChannelName.TCH_2_4_CHANNEL
 
     def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
         self.M = len(inputDataBlocks)
@@ -627,7 +605,7 @@ class TCH_2_4(TrafficChannel):
 class Linearization_Channel(LogicalChannel_VD):
 
     def __init__(self):
-        self.channelType = LINEARIZATION_TYPE
+        self.channelType = ChannelKind.LINEARIZATION_TYPE
     
     def generateRndInput(self):
         return [randint(0,1) for _ in range(self.K1)]
@@ -644,13 +622,19 @@ class CLCH(Linearization_Channel):
         self.K1 = 238
         self.K5 = 238
         self.M = 1
-        self.channel = CLCH_CHANNEL
+        self.channel = ChannelName.CLCH_CHANNEL
 
-    def encodeType5Bits(self):
-        raise NotImplementedError
+    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
+        self.type1Blocks = inputDataBlocks
+        self.validateKLength(1)
+        self.type5Blocks = self.type1Blocks
+        self.validateKLength(5)
     
-    def decodeType5Bits(self):
-       raise NotImplementedError
+    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
+        self.type5Blocks = inputDataBlocks
+        self.validateKLength(5)
+        self.type1Blocks = self.type5Blocks
+        self.validateKLength(10)
 
 class BLCH(Linearization_Channel):
     '''
@@ -663,10 +647,16 @@ class BLCH(Linearization_Channel):
         self.K1 = 216
         self.K5 = 216
         self.M = 1
-        self.channel = BLCH_CHANNEL
+        self.channel = ChannelName.BLCH_CHANNEL
     
-    def encodeType5Bits(self):
-        raise NotImplementedError
+    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
+        self.type1Blocks = inputDataBlocks
+        self.validateKLength(1)
+        self.type5Blocks = self.type1Blocks
+        self.validateKLength(5)
     
-    def decodeType5Bits(self):
-       raise NotImplementedError
+    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
+       self.type5Blocks = inputDataBlocks
+       self.validateKLength(5)
+       self.type1Blocks = self.type5Blocks
+       self.validateKLength(10)
