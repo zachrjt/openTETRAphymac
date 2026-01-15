@@ -2,12 +2,14 @@
 # Based on EN 300 392-2 V2.4.2
 from typing import List
 from numpy.random import randint
+from numpy import uint8, array, empty
+from numpy.typing import NDArray
 from abc import ABC, abstractmethod
 from .constants import SlotLength, ChannelKind, ChannelName
 from .coding_scrambling import crc16Decoder, crc16Encoder, rcpcDecoder, rcpcEncoder, rm3014Decoder, rm3014Encoder, blockDeInterleaver
 from .coding_scrambling import descrambler, nBlockInterleaver, blockInterleaver, nBlockDeInterleaver, scrambler
 
-# TODO: rewrite block building to numpy ndarrays allocation, abstract the building
+TAIL_BITS_ARRAY = array([0,0,0,0], uint8)
 
 class LogicalChannel_VD(ABC):
     '''
@@ -20,11 +22,11 @@ class LogicalChannel_VD(ABC):
     '''
 
     # attributes contain the various types of bits, all are stored for now for analysis when needed
-    type5Blocks = []
-    type4Blocks = []
-    type3Blocks = []
-    type2Blocks = []
-    type1Blocks = []
+    type5Blocks: NDArray
+    type4Blocks: NDArray
+    type3Blocks: NDArray
+    type2Blocks: NDArray
+    type1Blocks: NDArray
 
     channel = ""      # Describes the written name of the logical channel
     channelType = ""  # Channel type either traffic or control
@@ -48,9 +50,8 @@ class LogicalChannel_VD(ABC):
     def decodeType5Bits(self):
         pass
 
-    @abstractmethod
-    def generateRndInput(self):
-        pass
+    def generateRndInput(self, M:int=1) -> NDArray[uint8]:
+        return randint(0, 2, size=(M, self.K1), dtype=uint8)
     
     def validateKLength(self, K:int):
         '''
@@ -64,21 +65,17 @@ class LogicalChannel_VD(ABC):
         if K == 5:
             if self.K5 == 0:
                 raise ValueError (f"K5 unspecified")
-            if len(self.type5Blocks) == 0:
+            if self.type5Blocks is None:
                 raise ValueError (f"type5Blocks unspecified")
-            
-            for i in range(self.M):
-                if len(self.type5Blocks[i]) != self.K5:
-                    raise ValueError (f"For logical channel {self.__class__.__name__}, expected K5: {self.K5} output bits, recieved {len(self.type5Blocks[i])} in block {i}")
+            if self.type5Blocks.shape[1] != self.K5:
+                raise ValueError (f"For logical channel {self.__class__.__name__}, expected K5: {self.K5} output bits, recieved {self.type5Blocks.shape}")
         elif K == 1:
             if self.K1 == 0:
                 raise ValueError (f"K1 unspecified")
-            if len(self.type1Blocks) == 0:
+            if self.type1Blocks is None:
                 raise ValueError (f"type1Blocks unspecified")
-            
-            for i in range(self.M):
-                if len(self.type1Blocks[i]) != self.K1:
-                    raise ValueError (f"For logical channel {self.__class__.__name__}, expected K1: {self.K1} output bits, recieved {len(self.type1Blocks[i])} in block {i}")
+            if self.type1Blocks.shape[1] != self.K1:
+                raise ValueError (f"For logical channel {self.__class__.__name__}, expected K1: {self.K1} output bits, recieved {self.type1Blocks.shape}")
 
 ###################################################################################################
 # Control CHannels (CCH)
@@ -87,8 +84,6 @@ class ControlChannel(LogicalChannel_VD):
     def __init__(self):
         self.channelType = ChannelKind.CONTROL_TYPE
     
-    def generateRndInput(self):
-        return [randint(0,1) for _ in range(self.K1)]
 
 ###################################################################################################
 class BCCH(ControlChannel):
@@ -99,6 +94,8 @@ class BCCH(ControlChannel):
     '''
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+
 
 
 class BNCH(BCCH):
@@ -113,28 +110,45 @@ class BNCH(BCCH):
         self.K5 = 216
         self.channel = ChannelName.BNCH_CHANNEL
     
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
-        self.type2Blocks = [crc16Encoder(inputDataBlocks[0],124) + [0,0,0,0]]
-        self.type3Blocks = [rcpcEncoder(self.type2Blocks[0],2,3)]
-        self.type4Blocks = [blockInterleaver(self.type3Blocks[0],216,101)]
-        self.type5Blocks = [scrambler(self.type4Blocks[0])]
+
+        self.type2Blocks = empty(shape=(self.M, 144), dtype=uint8)
+        self.type2Blocks[0][:-4] = crc16Encoder(self.type1Blocks[0])
+        self.type2Blocks[0][-4:] = TAIL_BITS_ARRAY
+
+        self.type3Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type3Blocks[0] = rcpcEncoder(self.type2Blocks[0],2,3)
+
+        self.type4Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type4Blocks[0] = blockInterleaver(self.type3Blocks[0],101)
+
+        self.type5Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type5Blocks[0] = scrambler(self.type4Blocks[0])
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = [descrambler(self.type5Blocks[0])]
-        self.type3Blocks = [blockDeInterleaver(self.type4Blocks[0],216,101)]
-        self.type2Blocks = [rcpcDecoder(self.type3Blocks[0],144,2,3)]
-        *self.type1Blocks, self.CRC = crc16Decoder(self.type2Blocks[0][:-4],124)
+        self.type4Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type4Blocks[0] = descrambler(self.type5Blocks[0])
+
+        self.type3Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type3Blocks[0] = blockDeInterleaver(self.type4Blocks[0],101)
+
+        self.type2Blocks = empty(shape=(self.M, 144), dtype=uint8)
+        self.type2Blocks[0] = rcpcDecoder(self.type3Blocks[0],144,2,3)
+
+        self.type1Blocks = empty(shape=(self.M, 124), dtype=uint8)
+        self.type1Blocks[0], self.CRC = crc16Decoder(self.type2Blocks[0][:-4])
         self.validateKLength(1)
 
 class BSCH(BCCH):
@@ -149,29 +163,46 @@ class BSCH(BCCH):
         self.K5 = 120
         self.channel = ChannelName.BSCH_CHANNEL
 
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
-        self.type2Blocks = [crc16Encoder(inputDataBlocks[0],60) + [0,0,0,0]]
-        self.type3Blocks = [rcpcEncoder(self.type2Blocks[0],2,3)]
-        self.type4Blocks = [blockInterleaver(self.type3Blocks[0],120,11)]
-        self.type5Blocks = [scrambler(self.type4Blocks[0],BSCH=True)]
+
+        self.type2Blocks = empty(shape=(self.M, 80), dtype=uint8)
+        self.type2Blocks[0][:-4] = crc16Encoder(inputDataBlocks[0])
+        self.type2Blocks[0][-4:] = TAIL_BITS_ARRAY
+
+        self.type3Blocks = empty(shape=(self.M, 120), dtype=uint8)
+        self.type3Blocks[0] = rcpcEncoder(self.type2Blocks[0],2,3)
+
+        self.type4Blocks = empty(shape=(self.M, 120), dtype=uint8)
+        self.type4Blocks[0] = blockInterleaver(self.type3Blocks[0],11)
+
+        self.type5Blocks = empty(shape=(self.M, 120), dtype=uint8)
+        self.type5Blocks[0] = scrambler(self.type4Blocks[0],BSCH=True)
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = [descrambler(self.type5Blocks[0],BSCH=True)]
-        self.type3Blocks = [blockDeInterleaver(self.type4Blocks[0],120,11)]
-        self.type2Blocks = [rcpcDecoder(self.type3Blocks[0],80,2,3)]
-        *self.type1Blocks, self.CRC = crc16Decoder(self.type2Blocks[0][:-4],60)
+
+        self.type4Blocks = empty(shape=(self.M, 120), dtype=uint8)
+        self.type4Blocks[0] = descrambler(self.type5Blocks[0],BSCH=True)
+
+        self.type3Blocks = empty(shape=(self.M, 120), dtype=uint8)
+        self.type3Blocks[0] = blockDeInterleaver(self.type4Blocks[0],11)
+
+        self.type2Blocks = empty(shape=(self.M, 80), dtype=uint8)
+        self.type2Blocks[0] = rcpcDecoder(self.type3Blocks[0],80,2,3)
+
+        self.type1Blocks = empty(shape=(self.M, 60), dtype=uint8)
+        self.type1Blocks[0], self.CRC = crc16Decoder(self.type2Blocks[0][:-4])
         self.validateKLength(1)
 
 ###################################################################################################
@@ -203,28 +234,45 @@ class SCH_F(SCH):
         self.K5 = 432
         self.channel = ChannelName.SCH_F_CHANNEL
 
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
-        self.type2Blocks = [crc16Encoder(inputDataBlocks[0],268) + [0,0,0,0]]
-        self.type3Blocks = [rcpcEncoder(self.type2Blocks[0],2,3)]
-        self.type4Blocks = [blockInterleaver(self.type3Blocks[0],432,103)]
-        self.type5Blocks = [scrambler(self.type4Blocks[0])]
+
+        self.type2Blocks = empty(shape=(self.M, 288), dtype=uint8)
+        self.type2Blocks[0][:-4] = crc16Encoder(self.type1Blocks[0])
+        self.type2Blocks[0][-4:] = TAIL_BITS_ARRAY
+
+        self.type3Blocks = empty(shape=(self.M, 432), dtype=uint8)
+        self.type3Blocks[0] = rcpcEncoder(self.type2Blocks[0],2,3)
+
+        self.type4Blocks = empty(shape=(self.M, 432), dtype=uint8)
+        self.type4Blocks[0] = blockInterleaver(self.type3Blocks[0],103)
+
+        self.type5Blocks = empty(shape=(self.M, 432), dtype=uint8)
+        self.type5Blocks[0] = scrambler(self.type4Blocks[0])
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = [descrambler(self.type5Blocks[0])]
-        self.type3Blocks = [blockDeInterleaver(self.type4Blocks[0],432,103)]
-        self.type2Blocks = [rcpcDecoder(self.type3Blocks[0],288,2,3)]
-        *self.type1Blocks, self.CRC = crc16Decoder(self.type2Blocks[0][:-4],268)
+
+        self.type4Blocks = empty(shape=(self.M, 432), dtype=uint8)
+        self.type4Blocks[0] = descrambler(self.type5Blocks[0])
+
+        self.type3Blocks = empty(shape=(self.M, 432), dtype=uint8)
+        self.type3Blocks[0] = blockDeInterleaver(self.type4Blocks[0],103)
+
+        self.type2Blocks = empty(shape=(self.M, 288), dtype=uint8)
+        self.type2Blocks[0] = rcpcDecoder(self.type3Blocks[0],288,2,3)
+
+        self.type1Blocks = empty(shape=(self.M, 268), dtype=uint8)
+        self.type1Blocks[0], self.CRC = crc16Decoder(self.type2Blocks[0][:-4])
         self.validateKLength(1)
 
 class SCH_HD(SCH):
@@ -239,28 +287,45 @@ class SCH_HD(SCH):
         self.K5 = 216
         self.channel = ChannelName.SCH_HD_CHANNEL
     
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
-        self.type2Blocks = [crc16Encoder(inputDataBlocks[0],124) + [0,0,0,0]]
-        self.type3Blocks = [rcpcEncoder(self.type2Blocks[0],2,3)]
-        self.type4Blocks = [blockInterleaver(self.type3Blocks[0],216,101)]
-        self.type5Blocks = [scrambler(self.type4Blocks[0])]
+
+        self.type2Blocks = empty(shape=(self.M, 144), dtype=uint8)
+        self.type2Blocks[0][:-4] = crc16Encoder(self.type1Blocks[0])
+        self.type2Blocks[0][-4:] = TAIL_BITS_ARRAY
+
+        self.type3Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type3Blocks[0] = rcpcEncoder(self.type2Blocks[0],2,3)
+
+        self.type4Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type4Blocks[0] = blockInterleaver(self.type3Blocks[0],101)
+
+        self.type5Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type5Blocks[0] = scrambler(self.type4Blocks[0])
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:list):
-        self.M = len(inputDataBlocks)
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = [descrambler(self.type5Blocks[0])]
-        self.type3Blocks = [blockDeInterleaver(self.type4Blocks[0],216,101)]
-        self.type2Blocks = [rcpcDecoder(self.type3Blocks[0],144,2,3)]
-        *self.type1Blocks, self.CRC = crc16Decoder(self.type2Blocks[0][:-4],124)
+        self.type4Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type4Blocks[0] = descrambler(self.type5Blocks[0])
+
+        self.type3Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type3Blocks[0] = blockDeInterleaver(self.type4Blocks[0],101)
+
+        self.type2Blocks = empty(shape=(self.M, 144), dtype=uint8)
+        self.type2Blocks[0] = rcpcDecoder(self.type3Blocks[0],144,2,3)
+
+        self.type1Blocks = empty(shape=(self.M, 124), dtype=uint8)
+        self.type1Blocks[0], self.CRC = crc16Decoder(self.type2Blocks[0][:-4])
         self.validateKLength(1)
 
 
@@ -276,28 +341,45 @@ class SCH_HU(SCH):
         self.K5 = 168
         self.channel = ChannelName.SCH_HU_CHANNEL
     
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
-        self.type2Blocks = [crc16Encoder(inputDataBlocks[0],92) + [0,0,0,0]]
-        self.type3Blocks = [rcpcEncoder(self.type2Blocks[0],2,3)]
-        self.type4Blocks = [blockInterleaver(self.type3Blocks[0],168,13)]
-        self.type5Blocks = [scrambler(self.type4Blocks[0])]
+
+        self.type2Blocks = empty(shape=(self.M, 112), dtype=uint8)
+        self.type2Blocks[0][:-4] = crc16Encoder(inputDataBlocks[0]) 
+        self.type2Blocks[0][-4:] = TAIL_BITS_ARRAY
+
+        self.type3Blocks = empty(shape=(self.M, 168), dtype=uint8)
+        self.type3Blocks[0] = rcpcEncoder(self.type2Blocks[0],2,3)
+
+        self.type4Blocks = empty(shape=(self.M, 168), dtype=uint8)
+        self.type4Blocks[0] = blockInterleaver(self.type3Blocks[0],13)
+
+        self.type5Blocks = empty(shape=(self.M, 168), dtype=uint8)
+        self.type5Blocks[0] = scrambler(self.type4Blocks[0])
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = [descrambler(self.type5Blocks[0])]
-        self.type3Blocks = [blockDeInterleaver(self.type4Blocks[0],168,13)]
-        self.type2Blocks = [rcpcDecoder(self.type3Blocks[0],112,2,3)]
-        *self.type1Blocks, self.CRC = crc16Decoder(self.type2Blocks[0][:-4],92)
+
+        self.type4Blocks = empty(shape=(self.M, 168), dtype=uint8)
+        self.type4Blocks[0] = descrambler(self.type5Blocks[0])
+
+        self.type3Blocks = empty(shape=(self.M, 168), dtype=uint8)
+        self.type3Blocks[0] = blockDeInterleaver(self.type4Blocks[0],13)
+
+        self.type2Blocks = empty(shape=(self.M, 112), dtype=uint8)
+        self.type2Blocks[0] = rcpcDecoder(self.type3Blocks[0],112,2,3)
+
+        self.type1Blocks = empty(shape=(self.M, 92), dtype=uint8)
+        self.type1Blocks[0], self.CRC = crc16Decoder(self.type2Blocks[0][:-4])
         self.validateKLength(1)
 
 
@@ -314,23 +396,31 @@ class AACH(ControlChannel):
         self.K5 = 30
         self.channel = ChannelName.AACH_CHANNEL
 
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
-        self.type5Blocks = [scrambler(rm3014Encoder(self.type1Blocks[0]), False)]
+        
+        self.type2Blocks = empty(shape=(self.M, 30), dtype=uint8)
+        self.type2Blocks[0] = rm3014Encoder(self.type1Blocks[0])
+
+        self.type5Blocks = empty(shape=(self.M, 30), dtype=uint8)
+        self.type5Blocks[0] = scrambler(self.type2Blocks[0], False)
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = [descrambler(self.type5Blocks[0])]
-        self.type1Blocks = [rm3014Decoder(self.type4Blocks[0])]
+        self.type2Blocks = empty(shape=(self.M, 30), dtype=uint8)
+        self.type2Blocks[0] = descrambler(self.type5Blocks[0])
+        
+        self.type1Blocks = empty(shape=(self.M, 14), dtype=uint8)
+        self.type1Blocks[0] = rm3014Decoder(self.type2Blocks[0])
         self.validateKLength(1)
 
 class STCH(ControlChannel):
@@ -347,28 +437,45 @@ class STCH(ControlChannel):
         self.K5 = 216
         self.channel = ChannelName.STCH_CHANNEL
 
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
-        self.type2Blocks = [crc16Encoder(inputDataBlocks[0],124) + [0,0,0,0]]
-        self.type3Blocks = [rcpcEncoder(self.type2Blocks[0],2,3)]
-        self.type4Blocks = [blockInterleaver(self.type3Blocks[0],216,101)]
-        self.type5Blocks = [scrambler(self.type4Blocks[0])]
+
+        self.type2Blocks = empty(shape=(self.M, 144), dtype=uint8)
+        self.type2Blocks[0][:-4] = crc16Encoder(self.type1Blocks[0])
+        self.type2Blocks[0][-4:] = TAIL_BITS_ARRAY
+
+        self.type3Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type3Blocks[0] = rcpcEncoder(self.type2Blocks[0],2,3)
+
+        self.type4Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type4Blocks[0] = blockInterleaver(self.type3Blocks[0],101)
+
+        self.type5Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type5Blocks[0] = scrambler(self.type4Blocks[0])
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        
+        self.M = inputDataBlocks.shape[0]
         if self.M != 1:
             raise ValueError(f"For type logical channel: {self.__class__.__name__}, only 1 data block is supported but {self.M} was passed")
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = [descrambler(self.type5Blocks[0])]
-        self.type3Blocks = [blockDeInterleaver(self.type4Blocks[0],216,101)]
-        self.type2Blocks = [rcpcDecoder(self.type3Blocks[0],144,2,3)]
-        *self.type1Blocks, self.CRC = crc16Decoder(self.type2Blocks[0][:-4],124)
+        self.type4Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type4Blocks[0] = descrambler(self.type5Blocks[0])
+
+        self.type3Blocks = empty(shape=(self.M, 216), dtype=uint8)
+        self.type3Blocks[0] = blockDeInterleaver(self.type4Blocks[0],101)
+
+        self.type2Blocks = empty(shape=(self.M, 144), dtype=uint8)
+        self.type2Blocks[0] = rcpcDecoder(self.type3Blocks[0],144,2,3)
+
+        self.type1Blocks = empty(shape=(self.M, 124), dtype=uint8)
+        self.type1Blocks[0], self.CRC = crc16Decoder(self.type2Blocks[0][:-4])
         self.validateKLength(1)
 
 ###################################################################################################
@@ -384,8 +491,6 @@ class TrafficChannel(LogicalChannel_VD):
         if self.N not in [1,2,4,8]:
             raise ValueError (f"The passed N - interleaving value of {self.N} is not valid.")
 
-    def generateRndInput(self) -> List[int]:
-        return[randint(0,1) for _ in range(self.K1)]
     
 class TCH_S(TrafficChannel):
     '''
@@ -407,35 +512,37 @@ class TCH_S(TrafficChannel):
         self.channel = ChannelName.TCH_S_CHANNEL
 
 
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
-        self.type1Blocks = inputDataBlocks
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
+        self.type1Blocks = inputDataBlocks.copy()
         self.validateKLength(1)
         if self.slotLength == SlotLength.FULL_SUBSLOT:
             self.type4Blocks = inputDataBlocks
-            self.type5Blocks = []
+            self.type5Blocks = empty(shape=(self.M, 432), dtype=uint8)
             for i in range(self.M):
-                self.type5Blocks.append(scrambler(self.type4Blocks[i]))
+                self.type5Blocks[i] = scrambler(self.type4Blocks[i])
+
         elif self.slotLength == SlotLength.HALF_SUBSLOT:
             self.type3Blocks = inputDataBlocks
-            self.type4Blocks = []
-            self.type5Blocks = []
+            self.type4Blocks = empty(shape=(self.M, 216), dtype=uint8)
+            self.type5Blocks = empty(shape=(self.M, 216), dtype=uint8)
             for i in range(self.M):
-                self.type4Blocks.append(blockInterleaver(self.type3Blocks[i],216,101))
-                self.type5Blocks.append(scrambler(self.type4Blocks[-1]))
+                self.type4Blocks[i] = blockInterleaver(self.type3Blocks[i],101)
+                self.type5Blocks[i] = scrambler(self.type4Blocks[i])
 
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
-        self.type5Blocks = inputDataBlocks
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
+        self.type5Blocks = inputDataBlocks.copy()
         self.validateKLength(5)
-        self.type4Blocks = [] 
-        self.type3Blocks = []
+        self.type4Blocks = empty(shape=(self.M, self.K5), dtype=uint8) 
+        if self.slotLength == SlotLength.HALF_SUBSLOT:
+            self.type3Blocks = empty(shape=(self.M, self.K1), dtype=uint8) 
         for i in range(self.M):
-            self.type4Blocks.append(descrambler(self.type5Blocks[i]))
+            self.type4Blocks[i] = descrambler(self.type5Blocks[i])
             if self.slotLength == SlotLength.HALF_SUBSLOT:
-                self.type3Blocks.append(blockDeInterleaver(self.type4Blocks[-1],216,101))
+                self.type3Blocks[i] = blockDeInterleaver(self.type4Blocks[-1],101)
         
         if self.slotLength == SlotLength.FULL_SUBSLOT:
             self.type1Blocks = self.type4Blocks
@@ -450,8 +557,9 @@ class TCH_S(TrafficChannel):
         self.slotLength = SlotLength.HALF_SUBSLOT
         self.K1 = 216
         self.K5 = 216
-        self.type1Blocks[:216] = self.type1Blocks[216:432]
-        self.encodeType5Bits(self.type1Blocks[:216])
+        self.type1Blocks[0][:216] = self.type1Blocks[0][216:432]
+        self.type1Blocks.resize(1,216)
+        self.encodeType5Bits(self.type1Blocks)
 
 class TCH_7_2(TrafficChannel):
     '''
@@ -467,25 +575,26 @@ class TCH_7_2(TrafficChannel):
         self.K1 = 432
         self.channel = ChannelName.TCH_7_2_CHANNEL
 
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
         self.type4Blocks = self.type1Blocks
 
-        self.type5Blocks = []
+        self.type5Blocks = empty(shape=(self.M, self.K5), dtype=uint8)
         for i in range(self.M):
-            self.type5Blocks.append(scrambler(self.type4Blocks[i]))
+            self.type5Blocks[i] = scrambler(self.type4Blocks[i])
 
         self.validateKLength(5)
 
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = []
+        self.type4Blocks = empty(shape=(self.M, self.K5), dtype=uint8)
+
         for i in range(self.M):
-            self.type4Blocks.append(descrambler(self.type5Blocks[i]))
+            self.type4Blocks[i] = descrambler(self.type5Blocks[i])
 
         self.type1Blocks = self.type4Blocks
         self.validateKLength(1)
@@ -505,42 +614,44 @@ class TCH_4_8(TrafficChannel):
         self.K1 = 288
         self.channel = ChannelName.TCH_4_8_CHANNEL
 
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
-        self.type2Blocks = []
-        self.type3Blocks = []
+        self.type2Blocks = empty(shape=(self.M, 292), dtype=uint8)
+        self.type3Blocks = empty(shape=(self.M, 432), dtype=uint8)
         for i in range(self.M):
-            self.type2Blocks.append(self.type1Blocks[i]+[0,0,0,0])
-            self.type3Blocks.append(rcpcEncoder(self.type2Blocks[-1],292,432))
+            self.type2Blocks[i][:-4] = self.type1Blocks[i]
+            self.type2Blocks[i][-4:] = TAIL_BITS_ARRAY
+            self.type3Blocks[i] = rcpcEncoder(self.type2Blocks[i],292,432)
 
-        self.type4Blocks = nBlockInterleaver(self.type3Blocks,self.M,self.N)
-        self.type5Blocks = []
+        self.type4Blocks = nBlockInterleaver(self.type3Blocks,self.N)
+        self.type5Blocks = empty(shape=((self.M+self.N-1), 432), dtype=uint8)
 
         # blocks are scrambled individually
         for i in range((self.M+self.N-1)):
-            self.type5Blocks.append(scrambler(self.type4Blocks[i]))
+            self.type5Blocks[i] = scrambler(self.type4Blocks[i])
         
         self.validateKLength(5)
 
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
         self.M = (len(inputDataBlocks) + 1 - self.N)
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = []
+
+        self.type4Blocks = empty(shape=((self.M+self.N-1), 432), dtype=uint8)
         # blocks are scrambled individually
-        for i in range(len(inputDataBlocks)):
-            self.type4Blocks.append(descrambler(self.type5Blocks[i]))
+        for i in range((self.M+self.N-1)):
+            self.type4Blocks[i] = descrambler(self.type5Blocks[i])
         
         self.type3Blocks = nBlockDeInterleaver(self.type4Blocks,self.M,self.N)
         
-        self.type2Blocks = []
-        self.type1Blocks = []
+        self.type2Blocks = empty(shape=(self.M, 292), dtype=uint8)
+        self.type1Blocks = empty(shape=(self.M, 288), dtype=uint8)
 
         for i in range(self.M):
-            self.type2Blocks.append(rcpcDecoder(self.type3Blocks[i],292,292,432))
-            self.type1Blocks.append(self.type2Blocks[-1][:-4])
+            self.type2Blocks[i] = rcpcDecoder(self.type3Blocks[i],292,292,432)
+            self.type1Blocks[i] = self.type2Blocks[i][:-4]
         
         self.validateKLength(1)
     
@@ -559,42 +670,45 @@ class TCH_2_4(TrafficChannel):
         self.K1 = 144
         self.channel = ChannelName.TCH_2_4_CHANNEL
 
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = len(inputDataBlocks)
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = inputDataBlocks.shape[0]
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
-        self.type2Blocks = []
-        self.type3Blocks = []
-        for i in range(self.M):
-            self.type2Blocks.append(self.type1Blocks[i]+[0,0,0,0])
-            self.type3Blocks.append(rcpcEncoder(self.type2Blocks[-1],148,432))
 
-        self.type4Blocks = nBlockInterleaver(self.type3Blocks,self.M,self.N)
-        self.type5Blocks = []
+        self.type2Blocks = empty(shape=((self.M+self.N-1), 148), dtype=uint8)
+        self.type3Blocks = empty(shape=((self.M+self.N-1), 432), dtype=uint8)
+        for i in range(self.M):
+            self.type2Blocks[i][:-4] = self.type1Blocks[i]
+            self.type2Blocks[i][-4:] = TAIL_BITS_ARRAY
+            self.type3Blocks[i] = rcpcEncoder(self.type2Blocks[i],148,432)
+
+        self.type4Blocks = nBlockInterleaver(self.type3Blocks, self.N)
+        self.type5Blocks = empty(shape=((self.M+self.N-1), 432), dtype=uint8)
 
         # blocks are scrambled individually
         for i in range((self.M+self.N-1)):
-            self.type5Blocks.append(scrambler(self.type4Blocks[i]))
+            self.type5Blocks[i] = scrambler(self.type4Blocks[i])
 
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
-        self.M = (len(inputDataBlocks) + 1 - self.N)
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
+        self.M = (inputDataBlocks.shape[0] + 1 - self.N)
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
-        self.type4Blocks = []
+
+        self.type4Blocks = empty(shape=((self.M+self.N-1), 432), dtype=uint8)
         # blocks are scrambled individually
-        for i in range(len(inputDataBlocks)):
-            self.type4Blocks.append(descrambler(self.type5Blocks[i]))
+        for i in range((self.M+self.N-1)):
+            self.type4Blocks[i] = descrambler(self.type5Blocks[i])
         
         self.type3Blocks = nBlockDeInterleaver(self.type4Blocks,self.M,self.N)
         
-        self.type2Blocks = []
-        self.type1Blocks = []
+        self.type2Blocks = empty(shape=(self.M, 148), dtype=uint8)
+        self.type1Blocks = empty(shape=(self.M, 144), dtype=uint8)
 
         for i in range(self.M):
-            self.type2Blocks.append(rcpcDecoder(self.type3Blocks[i],148,148,432))
-            self.type1Blocks.append(self.type2Blocks[-1][:-4])
+            self.type2Blocks[i] = rcpcDecoder(self.type3Blocks[i],148,148,432)
+            self.type1Blocks[i] = self.type2Blocks[i][:-4]
         
         self.validateKLength(1)
     
@@ -607,8 +721,6 @@ class Linearization_Channel(LogicalChannel_VD):
     def __init__(self):
         self.channelType = ChannelKind.LINEARIZATION_TYPE
     
-    def generateRndInput(self):
-        return [randint(0,1) for _ in range(self.K1)]
 
 ###################################################################################################
 class CLCH(Linearization_Channel):
@@ -624,17 +736,17 @@ class CLCH(Linearization_Channel):
         self.M = 1
         self.channel = ChannelName.CLCH_CHANNEL
 
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
         self.type5Blocks = self.type1Blocks
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
         self.type5Blocks = inputDataBlocks
         self.validateKLength(5)
         self.type1Blocks = self.type5Blocks
-        self.validateKLength(10)
+        self.validateKLength(1)
 
 class BLCH(Linearization_Channel):
     '''
@@ -649,14 +761,14 @@ class BLCH(Linearization_Channel):
         self.M = 1
         self.channel = ChannelName.BLCH_CHANNEL
     
-    def encodeType5Bits(self, inputDataBlocks:List[List[int]]):
+    def encodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
         self.type1Blocks = inputDataBlocks
         self.validateKLength(1)
         self.type5Blocks = self.type1Blocks
         self.validateKLength(5)
     
-    def decodeType5Bits(self, inputDataBlocks:List[List[int]]):
+    def decodeType5Bits(self, inputDataBlocks:NDArray[uint8]):
        self.type5Blocks = inputDataBlocks
        self.validateKLength(5)
        self.type1Blocks = self.type5Blocks
-       self.validateKLength(10)
+       self.validateKLength(1)

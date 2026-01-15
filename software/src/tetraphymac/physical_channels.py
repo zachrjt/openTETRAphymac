@@ -156,13 +156,13 @@ class Control_Uplink(Burst):
         # Build the burst
         d = self.startGuardBitPeriod
         burstBitSequence = empty(shape=(self.SNmax*2)+d+self.endGuardBitPeriod, dtype=uint8)
-        burstBitSequence[:d] = randint(0, 2, size=self.startGuardBitPeriod).astype(uint8) # guard period
+        burstBitSequence[:d] = randint(0, 2, size=self.startGuardBitPeriod, dtype=uint8) # guard period
         burstBitSequence[d:4+d] = TAIL_BITS
-        burstBitSequence[d+4:88+d] = array(inputLogicalChannelSsn1.type5Blocks[0][:84],dtype=uint8)
+        burstBitSequence[d+4:88+d] = inputLogicalChannelSsn1.type5Blocks[0][:84]
         burstBitSequence[d+88:118+d] = EXTENDED_TRAINING_SEQUENCE
-        burstBitSequence[d+118:202+d] = array(inputLogicalChannelSsn1.type5Blocks[0][84:168],dtype=uint8)
+        burstBitSequence[d+118:202+d] = inputLogicalChannelSsn1.type5Blocks[0][84:168]
         burstBitSequence[d+202:206+d] = TAIL_BITS
-        burstBitSequence[206+d:255] = randint(0, 2, size=self.endGuardBitPeriod).astype(uint8) # guard period
+        burstBitSequence[206+d:255] = randint(0, 2, size=self.endGuardBitPeriod, dtype=uint8) # guard period
         
         return burstBitSequence
     
@@ -260,17 +260,17 @@ class Normal_Uplink_Burst(Burst):
         burstBitSequence = empty(shape=(self.SNmax*2)+d+self.endGuardBitPeriod, dtype=uint8)
 
         burstBitSequence[d:4+d] = TAIL_BITS
-        burstBitSequence[d+4:220+d] = array(inputLogicalChannelBkn1.type5Blocks[0][:216],dtype=uint8)
+        burstBitSequence[d+4:220+d] = inputLogicalChannelBkn1.type5Blocks[0][:216]
         burstBitSequence[d+220:242+d] = NORMAL_TRAINING_SEQUENCE[trainingSequenceIndex]
         if inputLogicalChannelBkn2 is not None and self.mixedBurst:
-            burstBitSequence[d+242:458+d] = array(inputLogicalChannelBkn2.type5Blocks[0][:216],dtype=uint8)
+            burstBitSequence[d+242:458+d] = inputLogicalChannelBkn2.type5Blocks[0][:216]
         else:
-            burstBitSequence[d+242:458+d] = array(inputLogicalChannelBkn1.type5Blocks[0][216:432],dtype=uint8)
+            burstBitSequence[d+242:458+d] = inputLogicalChannelBkn1.type5Blocks[0][216:432]
         burstBitSequence[d+458:462+d] = TAIL_BITS
 
         # must add guard period training sequence if there is no ramping at the start
         if rampUpandDown[0]:
-            burstBitSequence[:d] = randint(0, 2, size=d).astype(uint8)
+            burstBitSequence[:d] = randint(0, 2, size=d, dtype=uint8)
         else:
             # add preceding bits per 9.4.5.3
             burstBitSequence[:30] = EXTENDED_TRAINING_SEQUENCE
@@ -281,7 +281,7 @@ class Normal_Uplink_Burst(Burst):
         
         # must add guard period training sequence if there is no ramping at the end
         if rampUpandDown[1]:
-            burstBitSequence[462+d:510] = randint(0, 2, size=self.endGuardBitPeriod).astype(uint8)
+            burstBitSequence[462+d:510] = randint(0, 2, size=self.endGuardBitPeriod, dtype=uint8)
         else:
             # add following bits per 9.4.5.3
             # Insert phase adjustment bits f
@@ -493,23 +493,23 @@ class Normal_Cont_Downlink_Burst(NormalDownlinkMixin, Burst):
         
         if rampUpandDown[0]:
             # if we are ramp up (TRUE), it means that this is the first burst, 
-            burstBitSequence[:12] = randint(0, 2, size=12).astype(uint8)
+            burstBitSequence[:12] = randint(0, 2, size=12, dtype=uint8)
         else:
             # other we are continuous (or we are ramping down add preceding bits per 9.4.5.1 - Table 28)
             burstBitSequence[:12] = NORMAL_TRAINING_SEQUENCE[2][10:22]
         # temporarily skip phase adjustment bits a - [12:14]
-        burstBitSequence[14:230] = array(inputLogicalChannelBkn1.type5Blocks[0][:216],dtype=uint8)
-        burstBitSequence[230:244] = array(inputLogicalChannelBbk.type5Blocks[0][:14],dtype=uint8)
+        burstBitSequence[14:230] = inputLogicalChannelBkn1.type5Blocks[0][:216]
+        burstBitSequence[230:244] = inputLogicalChannelBbk.type5Blocks[0][:14]
         burstBitSequence[244:266] = NORMAL_TRAINING_SEQUENCE[trainingSequenceIndex][:22]
-        burstBitSequence[266:282] = array(inputLogicalChannelBbk.type5Blocks[0][14:30],dtype=uint8)
+        burstBitSequence[266:282] = inputLogicalChannelBbk.type5Blocks[0][14:30]
         if inputLogicalChannelBkn2 is not None and self.mixedBurst:
-            burstBitSequence[282:498] = array(inputLogicalChannelBkn2.type5Blocks[0][:216],dtype=uint8)
+            burstBitSequence[282:498] = inputLogicalChannelBkn2.type5Blocks[0][:216]
         else:
-            burstBitSequence[282:498] = array(inputLogicalChannelBkn1.type5Blocks[0][216:432],dtype=uint8)
+            burstBitSequence[282:498] = inputLogicalChannelBkn1.type5Blocks[0][216:432]
         # temporarily skip phase adjustment bits b - [498:500]
         if rampUpandDown[1]:
             # if we are ramp down (TRUE), it means that this is the last burst we are ramping down 
-            burstBitSequence[500:510] = randint(0, 2, size=10).astype(uint8)
+            burstBitSequence[500:510] = randint(0, 2, size=10, dtype=uint8)
         else:
             # otherwise we are continuous (or we are have ramped up add preceding bits per 9.4.5.1 - Table 27)
             burstBitSequence[500:510] = NORMAL_TRAINING_SEQUENCE[2][0:10]
@@ -557,14 +557,14 @@ class Normal_Discont_Downlink_Burst(NormalDownlinkMixin, Burst):
 
         burstBitSequence[d:2+d] = NORMAL_TRAINING_SEQUENCE[2][20:22]
         # temporarily skip phase adjustment bits g - [d+2:4+d]
-        burstBitSequence[d+4:220+d] = array(inputLogicalChannelBkn1.type5Blocks[0][:216],dtype=uint8)
-        burstBitSequence[d+220:234+d] = array(inputLogicalChannelBbk.type5Blocks[0][:14],dtype=uint8)
+        burstBitSequence[d+4:220+d] = inputLogicalChannelBkn1.type5Blocks[0][:216]
+        burstBitSequence[d+220:234+d] = inputLogicalChannelBbk.type5Blocks[0][:14]
         burstBitSequence[d+234:256+d] = NORMAL_TRAINING_SEQUENCE[trainingSequenceIndex][:22]
-        burstBitSequence[d+256:272+d] = array(inputLogicalChannelBbk.type5Blocks[0][14:30],dtype=uint8)
+        burstBitSequence[d+256:272+d] = inputLogicalChannelBbk.type5Blocks[0][14:30]
         if inputLogicalChannelBkn2 is not None and self.mixedBurst:
-            burstBitSequence[d+272:488+d] = array(inputLogicalChannelBkn2.type5Blocks[0][:216],dtype=uint8)
+            burstBitSequence[d+272:488+d] = inputLogicalChannelBkn2.type5Blocks[0][:216]
         else:
-            burstBitSequence[d+272:488+d] = array(inputLogicalChannelBkn1.type5Blocks[0][216:432],dtype=uint8)
+            burstBitSequence[d+272:488+d] = inputLogicalChannelBkn1.type5Blocks[0][216:432]
         # temporarily skip phase adjustment bits h - [d+488:490+d]
         burstBitSequence[d+490:492+d] = NORMAL_TRAINING_SEQUENCE[2][:2]
         # Now insert phase adjustment bits
@@ -572,13 +572,13 @@ class Normal_Discont_Downlink_Burst(NormalDownlinkMixin, Burst):
         burstBitSequence[d+488:490+d] = calculatePhaseAdjustmentBits(burstBitSequence, PHASE_ADJUSTMENT_SYMBOL_RANGE['h'], d)
         # must add guard period training sequence if there is no ramping at the start
         if rampUpandDown[0]:
-            burstBitSequence[:d] = randint(0, 2, size=d).astype(uint8)
+            burstBitSequence[:d] = randint(0, 2, size=d, dtype=uint8)
         else:
             # add preceding bits per 9.4.5.2
             burstBitSequence[:d] = NORMAL_TRAINING_SEQUENCE[2][10:20]
         # must add guard period training sequence if there is no ramping at the end
         if rampUpandDown[1]:
-            burstBitSequence[492+d:510] = randint(0, 2, size=self.endGuardBitPeriod).astype(uint8)
+            burstBitSequence[492+d:510] = randint(0, 2, size=self.endGuardBitPeriod, dtype=uint8)
         else:
             # add following bits per 9.4.5.2
             burstBitSequence[492+d:510] = NORMAL_TRAINING_SEQUENCE[2][2:10] 
@@ -750,20 +750,20 @@ class Sync_Cont_Downlink_Burst(SynchronousDownlinkMixin, Burst):
 
         if rampUpandDown[0]:
             # if we are ramp up (TRUE), it means that this is the first burst, 
-            burstBitSequence[:12] = randint(0, 2, size=self.startGuardBitPeriod).astype(uint8)
+            burstBitSequence[:12] = randint(0, 2, size=self.startGuardBitPeriod, dtype=uint8)
         else:
             # other we are continuous (or we are ramping down add preceding bits per 9.4.5.1 - Table 28)
             burstBitSequence[:12] = NORMAL_TRAINING_SEQUENCE[2][10:22]
         # temporarily skip phase adjustment bits C - [12:14]
         burstBitSequence[14:94] = FREQUENCY_CORRECTION_FIELD
-        burstBitSequence[94:214] = array(inputLogicalChannelSb.type5Blocks[0][:120],dtype=uint8)
+        burstBitSequence[94:214] = inputLogicalChannelSb.type5Blocks[0][:120]
         burstBitSequence[214:252] = SYNCHRONIZATION_TRAINING_SEQUENCE
-        burstBitSequence[252:282] = array(inputLogicalChannelBbk.type5Blocks[0], dtype=uint8)
-        burstBitSequence[282:498] = array(inputLogicalChannelBkn2.type5Blocks[0][:216],dtype=uint8) # type: ignore[attr-defined]
+        burstBitSequence[252:282] = inputLogicalChannelBbk.type5Blocks[0]
+        burstBitSequence[282:498] = inputLogicalChannelBkn2.type5Blocks[0][:216] # type: ignore[attr-defined]
         # temporarily skip phase adjustment bits D - [498:500]
         if rampUpandDown[1]:
             # if we are ramp down (TRUE), it means that this is the last burst we are ramping down 
-            burstBitSequence[500:510] = randint(0, 2, size=self.endGuardBitPeriod).astype(uint8)
+            burstBitSequence[500:510] = randint(0, 2, size=self.endGuardBitPeriod, dtype=uint8)
         else:
             # otherwise we are continuous (or we are have ramped up add preceding bits per 9.4.5.1 - Table 27)
             burstBitSequence[500:510] = NORMAL_TRAINING_SEQUENCE[2][0:10]
@@ -810,10 +810,10 @@ class Sync_Discont_Downlink_Burst(SynchronousDownlinkMixin, Burst):
         burstBitSequence[d:2+d] = NORMAL_TRAINING_SEQUENCE[2][20:22]
         # temporarily skip phase adjustment bits i - [d+2:4+d]
         burstBitSequence[d+4:84+d] = FREQUENCY_CORRECTION_FIELD
-        burstBitSequence[d+84:204+d] = array(inputLogicalChannelSb.type5Blocks[0][:120],dtype=uint8)
+        burstBitSequence[d+84:204+d] = inputLogicalChannelSb.type5Blocks[0][:120]
         burstBitSequence[d+204:242+d] = SYNCHRONIZATION_TRAINING_SEQUENCE
-        burstBitSequence[d+242:272+d] = array(inputLogicalChannelBbk.type5Blocks[0][:30],dtype=uint8)
-        burstBitSequence[d+272:488+d] = array(inputLogicalChannelBkn2.type5Blocks[0][:216],dtype=uint8)
+        burstBitSequence[d+242:272+d] = inputLogicalChannelBbk.type5Blocks[0][:30]
+        burstBitSequence[d+272:488+d] = inputLogicalChannelBkn2.type5Blocks[0][:216]
         # temporarily skip phase adjustment bits j - [d+488:490+d]
         burstBitSequence[d+490:492+d] = NORMAL_TRAINING_SEQUENCE[2][:2]
 
@@ -823,14 +823,14 @@ class Sync_Discont_Downlink_Burst(SynchronousDownlinkMixin, Burst):
         
         # must add guard period training sequence if there is no ramping at the start
         if rampUpandDown[0]:
-            burstBitSequence[:d] = randint(0, 2, size=d).astype(uint8)
+            burstBitSequence[:d] = randint(0, 2, size=d, dtype=uint8)
         else:
             # add preceding bits per 9.4.5.2
             burstBitSequence[:d] = NORMAL_TRAINING_SEQUENCE[2][10:20]
         
         # must add guard period training sequence if there is no ramping at the end
         if rampUpandDown[1]:
-            burstBitSequence[492+d:510] = randint(0, 2, size=self.endGuardBitPeriod).astype(uint8)
+            burstBitSequence[492+d:510] = randint(0, 2, size=self.endGuardBitPeriod, dtype=uint8)
         else:
             # add following bits per 9.4.5.2
             burstBitSequence[492+d:510] = NORMAL_TRAINING_SEQUENCE[2][2:10]
@@ -870,10 +870,10 @@ class Linearization_Uplink_Burst(Burst):
         # Build the burst
         d = self.startGuardBitPeriod
         burstBitSequence = empty(shape=(self.SNmax*2)+d+self.endGuardBitPeriod, dtype=uint8)
-        burstBitSequence[0:d] = randint(0, 2, size=d).astype(uint8)
-        burstBitSequence[d:238+d] = array(inputLogicalChannelSsn1.type5Blocks[0][:238], dtype=uint8)
+        burstBitSequence[0:d] = randint(0, 2, size=d, dtype=uint8)
+        burstBitSequence[d:238+d] = inputLogicalChannelSsn1.type5Blocks[0][:238]
         # End guard bits
-        burstBitSequence[d+238:255] = randint(0, 2, size=self.endGuardBitPeriod).astype(uint8) 
+        burstBitSequence[d+238:255] = randint(0, 2, size=self.endGuardBitPeriod, dtype=uint8) 
 
         return burstBitSequence
 
@@ -893,7 +893,7 @@ class Null_Halfslot_Uplink_Burst(Burst):
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
     
     def constructBurstBitSequence(self):
-        return randint(0, 2, size=self.SNmax).astype(uint8)
+        return randint(0, 2, size=self.SNmax, dtype=uint8)
     
     def deconstructBurstBitSequence(self):
-        return randint(0, 2, size=self.SNmax).astype(uint8)
+        return randint(0, 2, size=self.SNmax, dtype=uint8)
