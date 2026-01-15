@@ -1,7 +1,7 @@
 import sys
 import pytest
-import numpy as np
 from pathlib import Path
+import numpy as np
 module_path = Path(__file__).resolve().parent.parent
 if str(module_path) not in sys.path:
     sys.path.append(str(module_path))
@@ -46,6 +46,11 @@ CASES = [
     (lc.CLCH, {}, 1),
 ]
 
+CASES_SPEECH = [
+    # Traffic channels with slotLength
+    (lc.TCH_S, {"N": 1, "slotLength": "full"}, 1),
+]
+
 def _assignArguments(case):
     ChannelCls, kwargs, M = case
     kw = ",".join(f"{k}={v}" for k,v in kwargs.items()) or "noargs"
@@ -56,11 +61,30 @@ def _assignArguments(case):
     [pytest.param(*case, id=_assignArguments(case)) for case in CASES]
 )
 
-def test_traffic_channels(ChannelCls, init_kwargs, M):
+def test_traffic_channels(ChannelCls, init_kwargs, M:int):
     # pass dict containing keyword-arguments, must use ** operator to do that
     tx = ChannelCls(**init_kwargs)
-    tx.encodeType5Bits([tx.generateRndInput() for _ in range(M)])
+    inputData = tx.generateRndInput(M)
+    tx.encodeType5Bits(inputData)
 
     rx = ChannelCls(**init_kwargs)
     rx.decodeType5Bits(tx.type5Blocks)
-    assert rx.type1Blocks == tx.type1Blocks
+    assert (rx.type1Blocks == tx.type1Blocks).all()
+
+# Test dedicated to verifying the speech traffic logical channel, can steal data on the fly with its' method
+@pytest.mark.parametrize("ChannelCls,init_kwargs,M", [pytest.param(*case, id=_assignArguments(case)) for case in CASES_SPEECH])
+def test_speech_slots(ChannelCls, init_kwargs, M:int):
+    # pass dict containing keyword-arguments, must use ** operator to do that
+    tx = ChannelCls(**init_kwargs)
+    inputData = tx.generateRndInput(M)
+    tx.encodeType5Bits(inputData)
+
+    rx = ChannelCls(**init_kwargs)
+    rx.decodeType5Bits(tx.type5Blocks)
+    assert (rx.type1Blocks == tx.type1Blocks).all()
+
+    tx.stealBlockA()
+    
+    rx = ChannelCls(N=1, slotLength="half")
+    rx.decodeType5Bits(tx.type5Blocks)
+    assert (rx.type1Blocks == tx.type1Blocks).all()

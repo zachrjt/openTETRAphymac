@@ -15,7 +15,8 @@ np.random.seed(10)
 
 def makeLogicalChannel(ChannelCLs, **kwargs):
     ch = ChannelCLs(**kwargs)
-    ch.encodeType5Bits([ch.generateRndInput()])
+    inputData = ch.generateRndInput(1)
+    ch.encodeType5Bits(inputData)
     return ch
     
 
