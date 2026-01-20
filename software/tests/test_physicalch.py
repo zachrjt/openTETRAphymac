@@ -45,15 +45,15 @@ NORMAL_VALID = [
     ("tchs_only_tp_fn2", "TP", 3, 2, 4, lambda: makeLogicalChannel(lc.TCH_S), None),
 
     ("schf_only_cp_fn1", "CP", 40, 1, 2, lambda: makeLogicalChannel(lc.SCH_F), None),
-    ("schf_only_tp_fn18", "TP", 1, bursts.CONTROL_FRAME_NUMBER, 3, lambda: makeLogicalChannel(lc.SCH_F), None),
+    ("schf_only_tp_fn18", "TP", 1, 18, 3, lambda: makeLogicalChannel(lc.SCH_F), None),
 
     # STCH + TCH on TP, FN in [1..17]
     ("stch_tch_tp_fn1", "TP", 20, 17, 4, lambda: makeLogicalChannel(lc.STCH), lambda: makeLogicalChannel(lc.TCH_4_8)),
     ("stch_tch_tp_fn1", "TP", 4, 3, 2, lambda: makeLogicalChannel(lc.STCH), lambda: makeLogicalChannel(lc.TCH_7_2)),
 
     # SCH/HD + BNCH on CP or TP, choose MN/TN satisfying (MN+TN)%4==1 when FN==18
-    ("schhd1_bnch_cp_fn18_mod1", "CP", 2, bursts.CONTROL_FRAME_NUMBER, 3, lambda: makeLogicalChannel(lc.SCH_HD), lambda: makeLogicalChannel(lc.BNCH)),
-    ("schhd2_bnch_cp_fn18_mod1", "TP", 5, bursts.CONTROL_FRAME_NUMBER, 4, lambda: makeLogicalChannel(lc.SCH_HD), lambda: makeLogicalChannel(lc.BNCH)),
+    ("schhd1_bnch_cp_fn18_mod1", "CP", 2, 18, 3, lambda: makeLogicalChannel(lc.SCH_HD), lambda: makeLogicalChannel(lc.BNCH)),
+    ("schhd2_bnch_cp_fn18_mod1", "TP", 5, 18, 4, lambda: makeLogicalChannel(lc.SCH_HD), lambda: makeLogicalChannel(lc.BNCH)),
 
     # SCH/HD + BLCH on UP, any FN 1..18
     ("schhd_blch_up_fn5", "UP", 1, 5, 1, lambda: makeLogicalChannel(lc.SCH_HD), lambda: makeLogicalChannel(lc.BLCH)),
@@ -64,7 +64,7 @@ NORMAL_INVALID = [
     ("tch_on_cp_invalid", "CP", 1, 1, 1, lambda: makeLogicalChannel(lc.TCH_4_8, N=1), None),
     ("schf_on_tp_wrong_fn", "TP", 1, 1, 1, lambda: makeLogicalChannel(lc.SCH_F), None),
     ("stch_tch_on_cp_invalid", "CP", 1, 1, 1, lambda: makeLogicalChannel(lc.STCH), lambda: makeLogicalChannel(lc.TCH_4_8, N=1)),
-    ("schhd_bnch_cp_fn18_modwrong", "CP", 1, bursts.CONTROL_FRAME_NUMBER, 1, lambda: makeLogicalChannel(lc.SCH_HD), lambda: makeLogicalChannel(lc.BNCH)),  # (1+1)%4=2
+    ("schhd_bnch_cp_fn18_modwrong", "CP", 1, 18, 1, lambda: makeLogicalChannel(lc.SCH_HD), lambda: makeLogicalChannel(lc.BNCH)),  # (1+1)%4=2
 ]
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,bkn1_fn,bkn2_fn", NORMAL_VALID, ids=lambda x: x if isinstance(x, str) else None)
@@ -125,32 +125,32 @@ def test_normal_discont_downlink_invalid(makePhysicalChannel, name, phy, MN, FN,
 
 SYNC_VALID = [
     # BSCH + SCH_HD on TP/CP requires FN=18 and (MN+TN)%4==3
-    ("bsch_schhd_tp_mod3", "TP", 2, bursts.CONTROL_FRAME_NUMBER, 1, lc.BSCH, lc.SCH_HD),  # 2+1=3
-    ("bsch_blch_cp_mod3",  "CP", 2, bursts.CONTROL_FRAME_NUMBER, 1, lc.BSCH, lc.BLCH),
+    ("bsch_schhd_tp_mod3", "TP", 2, 18, 1, lc.BSCH, lc.SCH_HD),  # 2+1=3
+    ("bsch_blch_cp_mod3",  "CP", 2, 18, 1, lc.BSCH, lc.BLCH),
     # BSCH + BNCH must be on UP, FN in 1..18
     ("bsch_bnch_up_fn5",   "UP", 1, 5, 1, lc.BSCH, lc.BNCH),
 ]
 
 SYNC_INVALID_BUILD = [
     # BSCH + SCH_HD: requires phy in {TP, CP}, FN=CONTROL_FRAME_NUMBER, and (MN+TN)%4==3
-    ("bsch_schhd_invalid_phy_up", "UP", 2, bursts.CONTROL_FRAME_NUMBER, 1, lc.BSCH, lc.SCH_HD),
+    ("bsch_schhd_invalid_phy_up", "UP", 2, 18, 1, lc.BSCH, lc.SCH_HD),
     ("bsch_schhd_wrong_fn_not_18", "CP", 2, 1, 1, lc.BSCH, lc.SCH_HD),
-    ("bsch_schhd_mod_rule_violation", "TP", 1, bursts.CONTROL_FRAME_NUMBER, 1, lc.BSCH, lc.SCH_HD),  # 1+1=2
+    ("bsch_schhd_mod_rule_violation", "TP", 1, 18, 1, lc.BSCH, lc.SCH_HD),  # 1+1=2
 
     # BSCH + BLCH: same as BSCH + SCH_HD
-    ("bsch_blch_invalid_phy_up", "UP", 2, bursts.CONTROL_FRAME_NUMBER, 1, lc.BSCH, lc.BLCH),
+    ("bsch_blch_invalid_phy_up", "UP", 2, 18, 1, lc.BSCH, lc.BLCH),
     ("bsch_blch_wrong_fn_not_18", "TP", 2, 5, 1, lc.BSCH, lc.BLCH),
-    ("bsch_blch_mod_rule_violation", "CP", 2, bursts.CONTROL_FRAME_NUMBER, 2, lc.BSCH, lc.BLCH),  # 2+2=0
+    ("bsch_blch_mod_rule_violation", "CP", 2, 18, 2, lc.BSCH, lc.BLCH),  # 2+2=0
 
     # BSCH + BNCH: must be on UP, FN in [1,18]
     ("bsch_bnch_invalid_phy_tp", "TP", 1, 5, 1, lc.BSCH, lc.BNCH),
     ("bsch_bnch_invalid_phy_cp", "CP", 1, 5, 1, lc.BSCH, lc.BNCH),
 
     # SCH_HD + BNCH: on TP requires FN=18 and (MN+TN)%4==1; on CP allows FN 1..18 with modulo checked when FN=18
-    ("schhd_bnch_invalid_phy_up", "UP", 1, bursts.CONTROL_FRAME_NUMBER, 1, lc.SCH_HD, lc.BNCH),
+    ("schhd_bnch_invalid_phy_up", "UP", 1, 18, 1, lc.SCH_HD, lc.BNCH),
     ("schhd_bnch_tp_wrong_fn_not_18", "TP", 1, 1, 1, lc.SCH_HD, lc.BNCH),
-    ("schhd_bnch_tp_mod_rule_violation", "TP", 1, bursts.CONTROL_FRAME_NUMBER, 1, lc.SCH_HD, lc.BNCH),  # 1+1=2 != 1
-    ("schhd_bnch_cp_mod_rule_violation_on_fn18", "CP", 1, bursts.CONTROL_FRAME_NUMBER, 2, lc.SCH_HD, lc.BNCH),  # 1+2=3 != 1
+    ("schhd_bnch_tp_mod_rule_violation", "TP", 1, 18, 1, lc.SCH_HD, lc.BNCH),  # 1+1=2 != 1
+    ("schhd_bnch_cp_mod_rule_violation_on_fn18", "CP", 1, 18, 2, lc.SCH_HD, lc.BNCH),  # 1+2=3 != 1
 
     # SCH_HD + BLCH: on TP requires FN=18; on CP/UP requires FN in [1,18]
     ("schhd_blch_tp_wrong_fn_not_18", "TP", 1, 1, 1, lc.SCH_HD, lc.BLCH),
@@ -161,20 +161,20 @@ SYNC_INVALID_BUILD = [
 
 SYNC_INVALID_INIT = [
     # Phy invalid
-    ("schhd_blch_invalid_phy_other", "XX", 1, bursts.CONTROL_FRAME_NUMBER, 1, lc.SCH_HD, lc.BLCH),
-    ("schhd_schhd_invalid_phy_other", "XX", 1, bursts.CONTROL_FRAME_NUMBER, 1, lc.SCH_HD, lc.SCH_HD),
+    ("schhd_blch_invalid_phy_other", "XX", 1, 18, 1, lc.SCH_HD, lc.BLCH),
+    ("schhd_schhd_invalid_phy_other", "XX", 1, 18, 1, lc.SCH_HD, lc.SCH_HD),
 
     # FN out of range
     ("init_fn_zero", "TP", 1, 0, 1, lc.BSCH, lc.SCH_HD),
-    ("init_fn_19",   "CP", 1, bursts.MULTIFRAME_TDMAFRAME_LENGTH + 1, 1, lc.BSCH, lc.SCH_HD),
+    ("init_fn_19",   "CP", 1, 18 + 1, 1, lc.BSCH, lc.SCH_HD),
 
     # TN out of range
-    ("init_tn_zero", "TP", 1, bursts.CONTROL_FRAME_NUMBER, 0, lc.BSCH, lc.SCH_HD),
-    ("init_tn_5",    "TP", 1, bursts.CONTROL_FRAME_NUMBER, bursts.TDMAFRAME_TIMESLOT_LENGTH + 1, lc.BSCH, lc.SCH_HD),
+    ("init_tn_zero", "TP", 1, 18, 0, lc.BSCH, lc.SCH_HD),
+    ("init_tn_5",    "TP", 1, 18, 4 + 1, lc.BSCH, lc.SCH_HD),
 
     # MN out of range
-    ("init_mn_zero", "TP", 0, bursts.CONTROL_FRAME_NUMBER, 1, lc.BSCH, lc.SCH_HD),
-    ("init_mn_61",   "TP", bursts.HYPERFRAME_MULTIFRAME_LENGTH + 1, bursts.CONTROL_FRAME_NUMBER, 1, lc.BSCH, lc.SCH_HD),
+    ("init_mn_zero", "TP", 0, 18, 1, lc.BSCH, lc.SCH_HD),
+    ("init_mn_61",   "TP", 60 + 1, 18, 1, lc.BSCH, lc.SCH_HD),
 ]
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SBcls,BKN2cls", SYNC_VALID, ids=lambda x: x if isinstance(x, str) else None)
@@ -257,30 +257,30 @@ CTRL_UL_VALID = [
     # On CP: FN can be any 1..18
     ("ctrl_ul_cp_fn1",  "CP", 1, 1,  1, 1),
     ("ctrl_ul_cp_fn9",  "CP", 1, 9,  2, 1),
-    ("ctrl_ul_cp_fn18", "CP", 1, bursts.MULTIFRAME_TDMAFRAME_LENGTH, 3, 1),
+    ("ctrl_ul_cp_fn18", "CP", 1, 18, 3, 1),
 
     # On TP: FN must be CONTROL_FRAME_NUMBER
-    ("ctrl_ul_tp_fn18_ts1", "TP", 1, bursts.CONTROL_FRAME_NUMBER, 1, 1),
-    ("ctrl_ul_tp_fn18_ts4", "TP", 7, bursts.CONTROL_FRAME_NUMBER, bursts.TDMAFRAME_TIMESLOT_LENGTH, 1),
+    ("ctrl_ul_tp_fn18_ts1", "TP", 1, 18, 1, 1),
+    ("ctrl_ul_tp_fn18_ts4", "TP", 7, 18, 4, 1),
 
     ("ctrl_ul_cp_ssn2", "CP", 2, 5, 1, 2),
 ]
 
 CTRL_UL_INVALID_INIT = [
     # Invalid phy for this burst type (UP is not allowed)
-    ("ctrl_ul_invalid_phy_up", "UP", 1, bursts.CONTROL_FRAME_NUMBER, 1, 1),
+    ("ctrl_ul_invalid_phy_up", "UP", 1, 18, 1, 1),
 
     # TN out of range
     ("ctrl_ul_invalid_tn0", "CP", 1, 1, 0, 1),
-    ("ctrl_ul_invalid_tn_hi", "CP", 1, 1, bursts.TDMAFRAME_TIMESLOT_LENGTH + 1, 1),
+    ("ctrl_ul_invalid_tn_hi", "CP", 1, 1, 4 + 1, 1),
 
     # MN out of range
     ("ctrl_ul_invalid_mn0", "CP", 0, 1, 1, 1),
-    ("ctrl_ul_invalid_mn_hi", "CP", bursts.HYPERFRAME_MULTIFRAME_LENGTH + 1, 1, 1, 1),
+    ("ctrl_ul_invalid_mn_hi", "CP", 60 + 1, 1, 1, 1),
 
     # FN out of range
     ("ctrl_ul_invalid_fn0", "CP", 1, 0, 1, 1),
-    ("ctrl_ul_invalid_fn_hi", "CP", 1, bursts.MULTIFRAME_TDMAFRAME_LENGTH + 1, 1, 1),
+    ("ctrl_ul_invalid_fn_hi", "CP", 1, 18 + 1, 1, 1),
 
     # SSN out of range
     ("ctrl_ul_invalid_ssn0", "CP", 1, 1, 1, 0),
@@ -290,7 +290,7 @@ CTRL_UL_INVALID_INIT = [
 CTRL_UL_INVALID_BUILD = [
     # On TP, FN must be CONTROL_FRAME_NUMBER (usually 18). Choose any FN in-range but not 18.
     ("ctrl_ul_tp_wrong_fn1", "TP", 1, 1, 1, 1),
-    ("ctrl_ul_tp_wrong_fn17", "TP", 1, bursts.MULTIFRAME_TDMAFRAME_LENGTH - 1, 1, 1),
+    ("ctrl_ul_tp_wrong_fn17", "TP", 1, 18 - 1, 1, 1),
 
     ("ctrl_ul_wrong_logical_channel", "CP", 1, 1, 1, 1),  # and pass lc.SCH_HD instead of lc.SCH_HU
 ]
@@ -336,18 +336,18 @@ def test_control_uplink_invalid_build(makePhysicalChannel, name, phy, MN, FN, TN
 NORM_UL_VALID = [
     # Pure traffic: (TRAFFIC, None) requires TP, FN 1..17
     ("ul_pure_tch_tp_fn1",  "TP", 1, 1,  1, 1, lc.TCH_4_8, None),
-    ("ul_pure_tch_tp_fn17", "TP", 1, bursts.MULTIFRAME_TDMAFRAME_LENGTH - 1, 2, 1, lc.TCH_2_4, None),
+    ("ul_pure_tch_tp_fn17", "TP", 1, 18 - 1, 2, 1, lc.TCH_2_4, None),
 
     # Pure control SCH/F: (CONTROL, None)
     # On CP: FN 1..18
     ("ul_schf_cp_fn1",  "CP", 1, 1,  1, 1, lc.SCH_F, None),
-    ("ul_schf_cp_fn18", "CP", 2, bursts.CONTROL_FRAME_NUMBER, 2, 1, lc.SCH_F, None),
+    ("ul_schf_cp_fn18", "CP", 2, 18, 2, 1, lc.SCH_F, None),
     # On TP: FN must be 18
-    ("ul_schf_tp_fn18", "TP", 3, bursts.CONTROL_FRAME_NUMBER, 3, 1, lc.SCH_F, None),
+    ("ul_schf_tp_fn18", "TP", 3, 18, 3, 1, lc.SCH_F, None),
 
     # (CONTROL, TRAFFIC) on TP FN 1..17 
     ("ul_stch_tch_tp_fn1",  "TP", 1, 1,  1, 1, lc.STCH, lc.TCH_4_8),
-    ("ul_stch_tch_tp_fn17", "TP", 2, bursts.MULTIFRAME_TDMAFRAME_LENGTH - 1, 2, 1, lc.STCH, lc.TCH_2_4),
+    ("ul_stch_tch_tp_fn17", "TP", 2, 18 - 1, 2, 1, lc.STCH, lc.TCH_2_4),
 
     # (CONTROL, CONTROL) on TP FN 1..17
     ("ul_stch_stch_tp_fn5", "TP", 5, 5,  3, 1, lc.STCH, lc.STCH),
@@ -362,15 +362,15 @@ NORM_UL_INVALID_INIT = [
 
     # FN out of range (now validated in base init)
     ("ul_invalid_fn0",  "TP", 1, 0, 1, 1, lc.TCH_4_8, None),
-    ("ul_invalid_fn19", "CP", 1, bursts.MULTIFRAME_TDMAFRAME_LENGTH + 1, 1, 1, lc.SCH_F, None),
+    ("ul_invalid_fn19", "CP", 1, 18 + 1, 1, 1, lc.SCH_F, None),
 
     # TN out of range
     ("ul_invalid_tn0",  "TP", 1, 1, 0, 1, lc.TCH_4_8, None),
-    ("ul_invalid_tn_hi","TP", 1, 1, bursts.TDMAFRAME_TIMESLOT_LENGTH + 1, 1, lc.TCH_4_8, None),
+    ("ul_invalid_tn_hi","TP", 1, 1, 4 + 1, 1, lc.TCH_4_8, None),
 
     # MN out of range
     ("ul_invalid_mn0",  "TP", 0, 1, 1, 1, lc.TCH_4_8, None),
-    ("ul_invalid_mn_hi","TP", bursts.HYPERFRAME_MULTIFRAME_LENGTH + 1, 1, 1, 1, lc.TCH_4_8, None),
+    ("ul_invalid_mn_hi","TP", 60 + 1, 1, 1, 1, lc.TCH_4_8, None),
 
     # SSN out of range
     ("ul_invalid_ssn0",  "TP", 1, 1, 1, 0, lc.TCH_4_8, None),
@@ -382,7 +382,7 @@ NORM_UL_INVALID_BUILD = [
     ("ul_pure_tch_on_cp", "CP", 1, 1, 1, 1, lc.TCH_4_8, None),  # expects TP
 
     # Pure traffic wrong FN (FN must be 1..17) 
-    ("ul_pure_tch_tp_fn18", "TP", 1, bursts.CONTROL_FRAME_NUMBER, 1, 1, lc.TCH_4_8, None),
+    ("ul_pure_tch_tp_fn18", "TP", 1, 18, 1, 1, lc.TCH_4_8, None),
 
     # SCH/F on TP wrong FN (must be 18) 
     ("ul_schf_tp_fn1", "TP", 1, 1, 1, 1, lc.SCH_F, None),
@@ -391,10 +391,10 @@ NORM_UL_INVALID_BUILD = [
     ("ul_stch_tch_on_cp", "CP", 1, 1, 1, 1, lc.STCH, lc.TCH_4_8),
 
     #(CONTROL, TRAFFIC) wrong FN (must be 1..17) 
-    ("ul_stch_tch_tp_fn18", "TP", 1, bursts.CONTROL_FRAME_NUMBER, 1, 1, lc.STCH, lc.TCH_4_8),
+    ("ul_stch_tch_tp_fn18", "TP", 1, 18, 1, 1, lc.STCH, lc.TCH_4_8),
 
     #(CONTROL, CONTROL) wrong FN (must be 1..17) 
-    ("ul_stch_stch_tp_fn18", "TP", 1, bursts.CONTROL_FRAME_NUMBER, 1, 1, lc.STCH, lc.STCH),
+    ("ul_stch_stch_tp_fn18", "TP", 1, 18, 1, 1, lc.STCH, lc.STCH),
 
     # bkn1=TRAFFIC, bkn2=TRAFFIC => falls to default case -> ValueError
     ("ul_tch_tch_invalid_combo", "TP", 1, 1, 1, 1, lc.TCH_4_8, lc.TCH_2_4),
@@ -449,51 +449,51 @@ def test_normal_uplink_invalid_build(makePhysicalChannel, name, phy, MN, FN, TN,
 
 LIN_UL_VALID = [
     # On CP/TP: must be control frame and (MN+TN)%4 == 3
-    ("lin_ul_cp_mn2_tn1_mod3", "CP", 2, bursts.CONTROL_FRAME_NUMBER, 1, 1, lc.CLCH),  # 2+1=3
-    ("lin_ul_tp_mn3_tn4_mod3", "TP", 3, bursts.CONTROL_FRAME_NUMBER, 4, 1, lc.CLCH),  # 3+4=7 -> 3 mod 4
+    ("lin_ul_cp_mn2_tn1_mod3", "CP", 2, 18, 1, 1, lc.CLCH),  # 2+1=3
+    ("lin_ul_tp_mn3_tn4_mod3", "TP", 3, 18, 4, 1, lc.CLCH),  # 3+4=7 -> 3 mod 4
 
     # On UP: no FN/modulo; only requires CLCH channel
     ("lin_ul_up_any_fn1",      "UP", 1, 1, 1, 1, lc.CLCH),
-    ("lin_ul_up_fn18_ok",      "UP", 5, bursts.CONTROL_FRAME_NUMBER, 2, 1, lc.CLCH),
+    ("lin_ul_up_fn18_ok",      "UP", 5, 18, 2, 1, lc.CLCH),
 ]
 
 LIN_UL_INVALID_INIT = [
     # invalid TN
-    ("lin_ul_init_tn0",    "CP", 1, bursts.CONTROL_FRAME_NUMBER, 0, 1, lc.CLCH),
-    ("lin_ul_init_tn_hi",  "CP", 1, bursts.CONTROL_FRAME_NUMBER, bursts.TDMAFRAME_TIMESLOT_LENGTH + 1, 1, lc.CLCH),
+    ("lin_ul_init_tn0",    "CP", 1, 18, 0, 1, lc.CLCH),
+    ("lin_ul_init_tn_hi",  "CP", 1, 18, 4 + 1, 1, lc.CLCH),
 
     # invalid MN
-    ("lin_ul_init_mn0",    "CP", 0, bursts.CONTROL_FRAME_NUMBER, 1, 1, lc.CLCH),
-    ("lin_ul_init_mn_hi",  "CP", bursts.HYPERFRAME_MULTIFRAME_LENGTH + 1, bursts.CONTROL_FRAME_NUMBER, 1, 1, lc.CLCH),
+    ("lin_ul_init_mn0",    "CP", 0, 18, 1, 1, lc.CLCH),
+    ("lin_ul_init_mn_hi",  "CP", 60 + 1, 18, 1, 1, lc.CLCH),
 
     # invalid FN 
     ("lin_ul_init_fn0",    "CP", 1, 0, 1, 1, lc.CLCH),
-    ("lin_ul_init_fn_hi",  "CP", 1, bursts.MULTIFRAME_TDMAFRAME_LENGTH + 1, 1, 1, lc.CLCH),
+    ("lin_ul_init_fn_hi",  "CP", 1, 18 + 1, 1, 1, lc.CLCH),
 
     # invalid SSN
-    ("lin_ul_init_ssn0",   "CP", 1, bursts.CONTROL_FRAME_NUMBER, 1, 0, lc.CLCH),
-    ("lin_ul_init_ssn_hi", "CP", 1, bursts.CONTROL_FRAME_NUMBER, 1, bursts.TIMESLOT_SUBSLOT_LENGTH + 1, lc.CLCH),
+    ("lin_ul_init_ssn0",   "CP", 1, 18, 1, 0, lc.CLCH),
+    ("lin_ul_init_ssn_hi", "CP", 1, 18, 1, bursts.TIMESLOT_SUBSLOT_LENGTH + 1, lc.CLCH),
 
     # invalid phy string
-    ("lin_ul_init_phy_invalid", "XX", 1, bursts.CONTROL_FRAME_NUMBER, 1, 1, lc.CLCH),
+    ("lin_ul_init_phy_invalid", "XX", 1, 18, 1, 1, lc.CLCH),
 ]
 
 LIN_UL_INVALID_BUILD = [
     #  Wrong FN on CP/TP: must be CONTROL_FRAME_NUMBER 
     ("lin_ul_cp_wrong_fn1",  "CP", 2, 1, 1, 1, lc.CLCH),
-    ("lin_ul_tp_wrong_fn17", "TP", 2, bursts.MULTIFRAME_TDMAFRAME_LENGTH - 1, 1, 1, lc.CLCH),
+    ("lin_ul_tp_wrong_fn17", "TP", 2, 18 - 1, 1, 1, lc.CLCH),
 
     #  Modulo rule on CP/TP: (MN+TN)%4 must be 3 
-    ("lin_ul_cp_mod_bad",    "CP", 1, bursts.CONTROL_FRAME_NUMBER, 1, 1, lc.CLCH),  # 1+1=2
-    ("lin_ul_tp_mod_bad",    "TP", 2, bursts.CONTROL_FRAME_NUMBER, 2, 1, lc.CLCH),  # 2+2=0
+    ("lin_ul_cp_mod_bad",    "CP", 1, 18, 1, 1, lc.CLCH),  # 1+1=2
+    ("lin_ul_tp_mod_bad",    "TP", 2, 18, 2, 1, lc.CLCH),  # 2+2=0
 
     #  Wrong logical channel: must be CLCH 
     # Pick any non-CLCH logical channel class that has .channel != CLCH_CHANNEL
-    ("lin_ul_cp_wrong_lc_aach", "CP", 2, bursts.CONTROL_FRAME_NUMBER, 1, 1, lc.AACH),
+    ("lin_ul_cp_wrong_lc_aach", "CP", 2, 18, 1, 1, lc.AACH),
     ("lin_ul_up_wrong_lc_schf", "UP", 1, 1, 1, 1, lc.SCH_F),
 
     # Valid mod, but invalid subslot
-    ("lin_ul_cp_ssn2_mod3",    "CP", 6, bursts.CONTROL_FRAME_NUMBER, 1, 2, lc.CLCH),  # 6+1=7 -> 3 mod 4
+    ("lin_ul_cp_ssn2_mod3",    "CP", 6, 18, 1, 2, lc.CLCH),  # 6+1=7 -> 3 mod 4
 ]
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SSN,LCcls",LIN_UL_VALID,ids=lambda x: x if isinstance(x, str) else None)

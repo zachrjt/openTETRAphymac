@@ -1,6 +1,6 @@
 # ZT - 2026
 # Based on EN 300 392-2 V2.4.2
-from typing import List
+from typing import Protocol, List
 from numpy.random import randint
 from numpy import uint8, array, empty
 from numpy.typing import NDArray
@@ -491,7 +491,33 @@ class TrafficChannel(LogicalChannel_VD):
         if self.N not in [1,2,4,8]:
             raise ValueError (f"The passed N - interleaving value of {self.N} is not valid.")
 
-    
+
+class TrafficChannelHost(Protocol):
+    # host protocol for the mixin to satisfiy typing
+    M: int
+    N: int
+    type1Blocks: NDArray
+    type2Blocks: NDArray
+    type3Blocks: NDArray
+    type4Blocks: NDArray
+    type5Blocks: NDArray
+
+class TrafficExplodeMixin:
+
+    def DecimateMultiSlotTrafficChannel(self:TrafficChannelHost):
+        # the purpose of this function to enable burst building of multi-slot traffic channels
+        # Because the physical channel burst classes expect single block logical channels,
+        # it would be necessary to deconstruct an M, N interleaved block logical channel into (M+N-1) 1 block ones
+        # just for burst/modulation purposes 
+        cls = type(self)
+        individualTrafficChannels = []
+        for i in range((self.M + self.N - 1)):
+            kwargs = {"N": 1}
+            individualTrafficChannels.append(cls(**kwargs))
+            individualTrafficChannels[-1].type5Blocks[i] = self.type5Blocks[i].copy()
+        
+        return individualTrafficChannels
+
 class TCH_S(TrafficChannel):
     '''
     Speech Traffic Channel (TCH/S)
@@ -600,7 +626,7 @@ class TCH_7_2(TrafficChannel):
         self.validateKLength(1)
 
     
-class TCH_4_8(TrafficChannel):
+class TCH_4_8(TrafficExplodeMixin, TrafficChannel):
     '''
     4,8 kbit/s net rate (TCH/4.8)
 
@@ -656,7 +682,7 @@ class TCH_4_8(TrafficChannel):
         self.validateKLength(1)
     
 
-class TCH_2_4(TrafficChannel):
+class TCH_2_4(TrafficExplodeMixin, TrafficChannel):
     '''
     2,4 kbit/s net rate (TCH/2.4)
 

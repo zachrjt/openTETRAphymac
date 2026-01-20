@@ -1,48 +1,46 @@
 # ZT - 2026
 import src.tetraphymac.logical_channels as lc
-import src.tetraphymac.coding_scrambling as cs
+import src.tetraphymac.physical_channels as pc
+import src.tetraphymac.modulation as tetraMod
 import numpy as np
+import matplotlib.pyplot as plt
 
 np.random.seed(10)
 
 def main():
+
+    # below is as an example of using the low level classes to generate burst I and Q data
+
+    pkt_traffic_ch = lc.TCH_4_8(N=4)
+    pkt_traffic_ch.encodeType5Bits(pkt_traffic_ch.generateRndInput(4))
+
+    ul_tp_rf_channel = pc.Physical_Channel(1, False, 905.1, 918.1, pc.PhyType.TRAFFIC_CHANNEL)
+
+    ul_tp_burst = pc.Normal_Uplink_Burst(ul_tp_rf_channel, 1, 1, 1)
+    burst_modulation_bits = ul_tp_burst.constructBurstBitSequence(pkt_traffic_ch)
+    print(burst_modulation_bits)
     
-    # inputData = np.random.randint(0,2,size=30,dtype=np.uint8)
-    # outputCRC = cs.crc16Encoder(inputData)
-    # decodeCRC, valid = cs.crc16Decoder(outputCRC)
-    # assert valid
-    # assert (decodeCRC == inputData).all()
-
-    # inputData = np.random.randint(0,2,size=14,dtype=np.uint8)
-    # outputRM = cs.rm3014Encoder(inputData)
-    # decodedRM = cs.rm3014Decoder(outputRM)
-    # assert (inputData == decodedRM).all()
-
-
-    # inputData = np.random.randint(0,2,size=432,dtype=np.uint8)
-    # scrambled = cs.scrambler(inputData)
-    # descrambled = cs.descrambler(scrambled)
-
-    # assert (inputData == descrambled).all()
-
-    # inputData = np.random.randint(0,2,size=432,dtype=np.uint8)
-    # interleaved = cs.blockInterleaver(inputData, 103)
-    # deinterleaved = cs.blockDeInterleaver(interleaved, 103)
-
-    # assert (inputData == deinterleaved).all()
-
-    # inputData = np.random.randint(0,2,size=(4,432),dtype=np.uint8)
-    # interleaved = cs.nBlockInterleaver(inputData, 4)
-    # deinterleaved = cs.nBlockDeInterleaver(interleaved, 4, 4)
-    # assert (inputData == deinterleaved).all()
-
-    tx_v_d_channel = lc.TCH_4_8(N=1)
-    tx_v_d_channel.encodeType5Bits(tx_v_d_channel.generateRndInput(1))
-
-    rx_v_d_channel = lc.TCH_4_8(N=1)
-    rx_v_d_channel.decodeType5Bits(tx_v_d_channel.type5Blocks)
-    assert (rx_v_d_channel.type1Blocks == tx_v_d_channel.type1Blocks).all()
-
+    # 1. now we must modulate
+    IQ_data = tetraMod.dqpskModulator(burst_modulation_bits)
+    # fig, axs = plt.subplots(2)
+    # axs[0].plot(IQ_data.real, '-', label="I")
+    # axs[1].plot(IQ_data.imag, '-', label="Q")
+    # axs[0].set_title("I Samples")
+    # axs[0].set_ylabel("I")
+    # axs[1].set_ylabel("Q")
+    # axs[1].set_title("Q Samples")
+    # axs[0].set_xlabel("Sample #")
+    # axs[1].set_xlabel("Sample #")
+    # axs[0].grid(True)
+    # axs[1].grid(True)
+    # plt.show()
     
+     # 2. Next step quantize and upsample for our purposes to 16 bit values half scale
+    up_sample_data = tetraMod.oversampleData(IQ_data, 8)
+    print(up_sample_data)
+   
+
+    # 3. Oversample and zero-pad (over sample by 8 times)
+
 if __name__ == '__main__':
     main()
