@@ -100,6 +100,7 @@ class Transmitter(ABC):
         # interpolate using 4x CIC
         # compensating FIR filter
         pass
+
     @abstractmethod
     def DAC(self):
         # convert digitzed data to continous
@@ -107,7 +108,16 @@ class Transmitter(ABC):
         # result is complex 64
         pass
 
-#class realisticTransmitter(Transmitter)
+
+
+
+class discreteTransmitter(Transmitter):
+    pass
+
+class continousTransmitter(Transmitter):
+    pass
+
+
 
 def oversampleData(inputData: NDArray[complex64], overSampleRate:int):
     outputData = zeros(shape=(2, inputData.size*overSampleRate), dtype=int16)
