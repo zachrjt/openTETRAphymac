@@ -19,25 +19,9 @@ def main():
     ul_tp_burst = pc.Normal_Uplink_Burst(ul_tp_rf_channel, 1, 1, 1)
     burst_modulation_bits = ul_tp_burst.constructBurstBitSequence(pkt_traffic_ch)
     print(burst_modulation_bits)
-    
-    # 1. now we must modulate
-    IQ_data = tetraMod.dqpskModulator(burst_modulation_bits)
-    # fig, axs = plt.subplots(2)
-    # axs[0].plot(IQ_data.real, '-', label="I")
-    # axs[1].plot(IQ_data.imag, '-', label="Q")
-    # axs[0].set_title("I Samples")
-    # axs[0].set_ylabel("I")
-    # axs[1].set_ylabel("Q")
-    # axs[1].set_title("Q Samples")
-    # axs[0].set_xlabel("Sample #")
-    # axs[1].set_xlabel("Sample #")
-    # axs[0].grid(True)
-    # axs[1].grid(True)
-    # plt.show()
-    
-     # 2. Next step quantize and upsample for our purposes to 16 bit values half scale
-    up_sample_data = tetraMod.oversampleData(IQ_data, 8)
-    print(up_sample_data)
+
+    tx = tetraMod.realTransmitter()
+    data = tx.transmitBurst(burst_modulation_bits, [ul_tp_burst.startGuardBitPeriod, ul_tp_burst.endGuardBitPeriod])
    
 
     # 3. Oversample and zero-pad (over sample by 8 times)

@@ -1,7 +1,7 @@
 # ZT - 2026
 # Based on EN 300 392-2 V2.4.2
 
-from numpy import uint8, array, empty
+from numpy import uint8, array, empty, zeros
 from numpy.random import randint
 from abc import ABC, abstractmethod
 from .constants import PhyType, LinkDirection, BurstContent, ChannelKind, ChannelName
@@ -15,6 +15,7 @@ MULTIFRAME_TDMAFRAME_LENGTH = 18
 CONTROL_FRAME_NUMBER = 18
 TDMAFRAME_TIMESLOT_LENGTH = 4
 TIMESLOT_BIT_LENGTH = 510
+TIMESLOT_SYMBOL_LENGTH = 255
 TIMESLOT_SUBSLOT_LENGTH = 2
 SUBSLOT_BIT_LENGTH = 255
 
@@ -917,10 +918,10 @@ class Null_Halfslot_Uplink_Burst(Burst):
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
     
     def constructBurstBitSequence(self):
-        return randint(0, 2, size=self.SNmax, dtype=uint8)
+        return zeros(shape=self.SNmax, dtype=uint8)
     
     def deconstructBurstBitSequence(self):
-        return randint(0, 2, size=self.SNmax, dtype=uint8)
+        return zeros(shape=self.SNmax, dtype=uint8)
     
 
 ###################################################################################################
