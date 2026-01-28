@@ -391,3 +391,4 @@ notebook/templates/*.html
 
 # Temporary files used for testing
 tmp/
+
