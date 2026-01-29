@@ -4,7 +4,7 @@
 from numpy import uint8, array, empty, zeros
 from numpy.random import randint
 from abc import ABC, abstractmethod
-from .constants import PhyType, LinkDirection, BurstContent, ChannelKind, ChannelName
+from .constants import PhyType, LinkDirection, BurstContent, ChannelKind, ChannelName, SUBSLOT_BIT_LENGTH, TIMESLOT_SYMBOL_LENGTH
 from .logical_channels import BLCH, BNCH, BSCH, CLCH, SCH_HD, SCH_F, SCH_HU, AACH, LogicalChannel_VD, TrafficChannel, STCH
 from .modulation import calculatePhaseAdjustmentBits
 from typing import List, Union, ClassVar, Optional, Protocol, Tuple
@@ -15,9 +15,7 @@ MULTIFRAME_TDMAFRAME_LENGTH = 18
 CONTROL_FRAME_NUMBER = 18
 TDMAFRAME_TIMESLOT_LENGTH = 4
 TIMESLOT_BIT_LENGTH = 510
-TIMESLOT_SYMBOL_LENGTH = 255
 TIMESLOT_SUBSLOT_LENGTH = 2
-SUBSLOT_BIT_LENGTH = 255
 
 MULTIFRAME_DURATION_MS = 1020
 MULTIFRAME_BIT_COUNT = 36720

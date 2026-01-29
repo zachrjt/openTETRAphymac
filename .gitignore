@@ -391,4 +391,5 @@ notebook/templates/*.html
 
 # Temporary files used for testing
 tmp/
+.virtual_documents/
 
