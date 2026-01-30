@@ -1,7 +1,7 @@
 # ZT - 2026
 # Based on EN 300 392-2 V2.4.2              
 from numpy import cumprod, complex64, pi, float64, uint8, mod, array, abs, sum, exp, zeros, float32
-from numpy import int64, uint8, empty, concatenate, round, convolve, right_shift, clip
+from numpy import int64, uint8, empty, concatenate, round, convolve, right_shift, clip, arange, cos, full
 from numpy.typing import NDArray
 import scipy as sp
 from abc import ABC, abstractmethod
@@ -101,6 +101,15 @@ FIR_HALFBAND3_FLOAT_COEFFICIENTS = array([0.0000000E+00, 9.0088874E-03, 0.000000
 BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT = 30
 
 VALID_ROUNDING_METHODS = ('rti', 'rtz', 'truncate', 'unbiased')
+VALID_START_GUARD_PERIOD_OFFSETS = [10, 12, 34, 120]
+VALID_END_GUARD_PERIOD_OFFSETS = [8, 10, 14]
+
+RAMPING_LUT_4 = []
+RAMPING_LUT_5 = []
+RAMPING_LUT_6 = []
+RAMPING_LUT_7 = []
+RAMPING_LUT_17 = []
+RAMPING_LUT_240 = []
 
 ###################################################################################################
 
@@ -136,20 +145,50 @@ def calculatePhaseAdjustmentBits(inputData: NDArray[uint8],
 ###################################################################################################
 
 def dqpskModulator(inputData: NDArray[uint8], 
+                   burstGuardRampPeriods:List[int],
                    phaseRef: complex64 = complex64(1 + 0j)) -> NDArray[complex64]:
     
-    assert inputData.ndim == 1
-    assert inputData.size % 2 == 0 # must have even number of bits,
+    if inputData.ndim != 1:
+        raise ValueError(f"Input data dimensions are: {inputData.ndim}, expected 1")
+    if inputData.size % 2 != 0: # must have even number of bits
+        raise ValueError(f"Number of input burst bits is: {inputData.size}, expected even number")
+    
+    if burstGuardRampPeriods[0] % 2 != 0:
+        raise ValueError(f"Start ramp guard period in number of bits is: {burstGuardRampPeriods[0]}, expected even number")
+    if burstGuardRampPeriods[1] % 2 != 0:
+        raise ValueError(f"End ramp guard period in number of bits is: {burstGuardRampPeriods[1]}, expected even number")
+
+    Nstart = int(burstGuardRampPeriods[0] / 2) # in number of symbols
+    Nend = int(burstGuardRampPeriods[1] / 2) # in number of symbols
+
+    # The ramping period at the start and end shall have constant phase,
+    # Therefore we exclude the ramping periods from the calculations,
+    # Note that the start ramping phase is constant and equal to reference phase, 
+    # while the final down ramp phase is constant and equal to whichever was the last phase in the useful part of the burst
+    # This prevents phase discontinuity
 
     # reshape to have even and odd bits [b0, b1]
-    bitPairs = inputData.reshape(-1,2)
+    usefulBurstSegment = inputData[(Nstart * 2) : inputData.size - (Nend * 2)]
+    bitPairs = usefulBurstSegment.reshape(-1,2)
     # map the even odd bits into a 4-entry code to map phase transistion quickly from LUT
     codedTransistions = (bitPairs[:, 0] << 1 ) | bitPairs[:, 1] # maps into value [b0b1, b2b3, ...]
     
     # grayTransistion -> 0=0b00, 1=0b01, 2=0b10, 3=0b11, lookup the phase transistion table in phasor form
     dPhasor = DQPSK_TRANSITION_PHASOR_LUT[codedTransistions]
     
-    return (cumprod(dPhasor) * phaseRef).astype(complex64)
+    burstSegment = (cumprod(dPhasor) * phaseRef).astype(complex64)
+
+    # prepend and postpend the constant phase ramping periods if they are needed
+    if Nstart > 0:
+        startRampPhase = full(Nstart, phaseRef, dtype=complex64)
+        burstSegment = concatenate((startRampPhase, burstSegment)).astype(complex64)
+
+    if Nend > 0:
+        endPhase = burstSegment[-1] if burstSegment.size > 0 else phaseRef
+        endRampPhase = full(Nend, endPhase, dtype=complex64)
+        burstSegment = concatenate((burstSegment, endRampPhase)).astype(complex64)
+
+    return burstSegment
 
 ###################################################################################################
 
@@ -176,14 +215,31 @@ def oversampleDataFloat(inputData: NDArray[complex64], overSampleRate:int) -> ND
 
 ###################################################################################################
 
+def _q17Rounding(multiplierResult:NDArray[int64], rounding:str = "rti"):
+    if rounding not in VALID_ROUNDING_METHODS:
+        raise ValueError(f"Rounding method passed of {rounding} invalid, expected type in: {VALID_ROUNDING_METHODS}")
+    y = multiplierResult.copy()
+    match rounding:
+        case "rti":
+            # Round to Infinity by adding 2^16 and right shifting by 17 bits
+            y += int64(1 << (NUMBER_OF_FRACTIONAL_BITS-1))
+        case "rtz":
+            # Round to Zero by adding (2^16 - 1)
+            y += int64((1 << (NUMBER_OF_FRACTIONAL_BITS-1))-1)
+        case "truncate":
+            pass
+        case "unbiased":
+            # TODO: Implement nonbiased rounding
+            raise NotImplementedError
+    
+    return right_shift(y, NUMBER_OF_FRACTIONAL_BITS)
+
 def _dspBlockFIRQuantizedStream(inputSymbols:NDArray[int64], hCoef:NDArray[int64], 
-                               inputState: NDArray[int64] | None = None,  rounding:str = "rti") -> Tuple[NDArray[int64], NDArray[int64]]:
+                               inputState: NDArray[int64] | None = None) -> Tuple[NDArray[int64], NDArray[int64]]:
     '''
     Handles the convolution process with continous state control, 
     but models the 54bit accumulation results and subsequent truncation and rounding down to Q1.17
     '''
-    if rounding not in VALID_ROUNDING_METHODS:
-        raise ValueError(f"Rounding method passed of {rounding} invalid, expected type in: {VALID_ROUNDING_METHODS}")
 
     Ntaps = hCoef.size
     if inputState is not None:
@@ -202,21 +258,8 @@ def _dspBlockFIRQuantizedStream(inputSymbols:NDArray[int64], hCoef:NDArray[int64
     burstSegment = fullAccumulated[(Ntaps-1):(Ntaps-1 + inputSymbols.size)].copy()
     # The rounding implemented is not pure unbiased rounding due to behaviour with negative values, however it provides
     # greater precision than pure truncation and are the only methods available on the ECP5 DSP slices
-    match rounding:
-        case "rti":
-            # Round to Infinity by adding 2^16 and right shifting by 17 bits
-            burstSegment += int64(1 << (NUMBER_OF_FRACTIONAL_BITS-1))
-            outputAccumulated = right_shift(burstSegment, NUMBER_OF_FRACTIONAL_BITS)
-        case "rtz":
-            # Round to Zero by adding (2^16 - 1)
-            burstSegment += int64((1 << (NUMBER_OF_FRACTIONAL_BITS-1))-1)
-            outputAccumulated = right_shift(burstSegment, NUMBER_OF_FRACTIONAL_BITS)
-        case "truncate":
-            # 
-            outputAccumulated = right_shift(burstSegment, NUMBER_OF_FRACTIONAL_BITS)
-        case "unbiased":
-            # TODO: Implement nonbiased rounding
-            raise NotImplementedError
+
+    outputAccumulated = _q17Rounding(burstSegment)
 
     # Saturate output incase of clipping, it is not expected for this to occur due to the FIR gains and such
     outputAccumulated = clip(outputAccumulated, -(1<<NUMBER_OF_FRACTIONAL_BITS), (1<<NUMBER_OF_FRACTIONAL_BITS)-1).astype(int64)
@@ -229,12 +272,10 @@ def _dspBlockFIRQuantizedStream(inputSymbols:NDArray[int64], hCoef:NDArray[int64
 ###################################################################################################
 
 def _dspBlockFIRFloatStream(inputSymbols:NDArray[float32], hCoef:NDArray[float32], 
-                               inputState: NDArray[float32] | None = None,  rounding:str = "rti") -> Tuple[NDArray[float32], NDArray[float32]]:
+                               inputState: NDArray[float32] | None = None) -> Tuple[NDArray[float32], NDArray[float32]]:
     '''
     Handles the convolution process with continous state control
     '''
-    if rounding not in VALID_ROUNDING_METHODS:
-        raise ValueError(f"Rounding method passed of {rounding} invalid, expected type in: {VALID_ROUNDING_METHODS}")
 
     Ntaps = hCoef.size
     if inputState is not None:
@@ -258,6 +299,154 @@ def _dspBlockFIRFloatStream(inputSymbols:NDArray[float32], hCoef:NDArray[float32
     return burstSegment, newState
 
 ###################################################################################################
+def _raisedCosineLUTQuantized(N: int, sps:int=BASEBAND_SAMPLING_FACTOR) -> NDArray[int64]:
+    # We want the last symbol to constant envelope, so we are not ramping during it
+    # therefore we calculate using N-2 to account for this
+    n = arange((N-2)*sps, dtype=int64)
+    profile = 0.5 * (1.0 - cos(pi * n / (((N-2)*sps)-1)))
+    lut = round(profile * (1 << NUMBER_OF_FRACTIONAL_BITS)).astype(int64)
+    lut[0] = 0
+    lut[-1] = (1 << NUMBER_OF_FRACTIONAL_BITS)
+
+    # prepend and postpend the full symbol period 0 at the start and 1 at the end
+    lut = concatenate((zeros(sps, dtype=int64), lut))
+    lut = concatenate((lut, full(sps, (1 << NUMBER_OF_FRACTIONAL_BITS), dtype=int64)))
+
+    return lut
+
+###################################################################################################
+
+def _raisedCosineFloat(N: int, sps:int=BASEBAND_SAMPLING_FACTOR) -> NDArray[float32]:
+    # We want the last symbol to constant envelope, so we are not ramping during it
+    # therefore we calculate using N-2 to account for this
+    n = arange((N-2)*sps, dtype=float32)
+    profile = 0.5 * (1.0 - cos(pi * n / (((N-2)*sps)-1)))
+    lut = profile.astype(float32)
+    lut[0] = 0
+    lut[-1] = 1
+
+    # prepend and postpend the full symbol period 0 at the start and 1 at the end
+    lut = concatenate((zeros(sps, dtype=float32), lut))
+    lut = concatenate((lut, full(sps, 1, dtype=float32)))
+
+    return lut
+
+###################################################################################################
+
+def _powerRampingQuantized(I:NDArray[int64], Q:NDArray[int64], 
+                           burstGuardRampPeriods:List, 
+                           sps:int=BASEBAND_SAMPLING_FACTOR) -> Tuple[NDArray[int64], NDArray[int64]]:
+    """
+    Performs power ramping on the quantized signal using LUTs and raised cosine shape
+    """
+    N = I.size
+    if burstGuardRampPeriods[0] not in VALID_START_GUARD_PERIOD_OFFSETS:
+        raise ValueError(f"Passed start burst guard ramp period of {burstGuardRampPeriods[0]}, expected value in: {VALID_START_GUARD_PERIOD_OFFSETS}")
+    
+    # For tetra, there are only a few defined burst delay periods,
+    Nstart = int(burstGuardRampPeriods[0] / 2) * sps
+    Nend = int(burstGuardRampPeriods[1] / 2) * sps
+
+    # create envelope of 1's
+    envelope = full(N, (1 << NUMBER_OF_FRACTIONAL_BITS), dtype=int64)
+    
+    match int(burstGuardRampPeriods[0] / 2):
+        case 5:
+            # Discontinuous SB or NDB
+            upRamp = RAMPING_LUT_5
+        case 6:
+            # Continuous SB or NDB
+            upRamp = RAMPING_LUT_6
+        case 17:
+            # NUB or CB
+            upRamp = RAMPING_LUT_17
+        case 240:
+            raise NotImplementedError(f"Uplink linearization (LB) ramping not implemented yet")
+    
+    envelope[:Nstart] = upRamp
+
+    if burstGuardRampPeriods[1] not in VALID_END_GUARD_PERIOD_OFFSETS:
+        raise ValueError(f"Passed end burst guard ramp period of {burstGuardRampPeriods[1]}, expected value in: {VALID_END_GUARD_PERIOD_OFFSETS}")
+ 
+    match int(burstGuardRampPeriods[1] / 2):
+        case 4:
+            # Discontinuous SB or NDB
+            downRamp = RAMPING_LUT_4
+        case 5:
+            # Continuous SB or NDB
+            downRamp = RAMPING_LUT_5
+        case 7:
+            # NUB or CB or LB
+            downRamp = RAMPING_LUT_7
+
+    envelope[-Nend:] = downRamp[::-1]
+
+    productI = I.astype(int64) * envelope.astype(int64)
+    productQ = Q.astype(int64) * envelope.astype(int64)
+
+    resultI = _q17Rounding(productI.copy())
+    resultQ = _q17Rounding(productQ.copy())
+
+    return resultI, resultQ
+
+
+###################################################################################################
+
+def _powerRampingFloat(I:NDArray[float32], Q:NDArray[float32], 
+                           burstGuardRampPeriods:List, 
+                           sps:int=BASEBAND_SAMPLING_FACTOR) -> Tuple[NDArray[float32], NDArray[float32]]:
+    """
+    Performs power ramping on the quantized signal using LUTs and raised cosine shape
+    """
+    N = I.size
+    if burstGuardRampPeriods[0] not in VALID_START_GUARD_PERIOD_OFFSETS:
+        raise ValueError(f"Passed start burst guard ramp period of {burstGuardRampPeriods[0]}, expected value in: {VALID_START_GUARD_PERIOD_OFFSETS}")
+    
+    # For tetra, there are only a few defined burst delay periods,
+    Nstart = int(burstGuardRampPeriods[0] / 2) * sps
+    Nend = int(burstGuardRampPeriods[1] / 2) * sps
+
+    # create envelope of 1's
+    envelope = full(N, 1, dtype=float32)
+    
+    match int(burstGuardRampPeriods[0] / 2):
+        case 5:
+            # Discontinuous SB or NDB
+            upRamp = _raisedCosineFloat(5)
+        case 6:
+            # Continuous SB or NDB
+            upRamp = _raisedCosineFloat(6)
+        case 17:
+            # NUB or CB
+            upRamp = _raisedCosineFloat(17)
+        case 240:
+            raise NotImplementedError(f"Uplink linearization (LB) ramping not implemented yet")
+    
+    envelope[:Nstart] = upRamp
+
+    if burstGuardRampPeriods[1] not in VALID_END_GUARD_PERIOD_OFFSETS:
+        raise ValueError(f"Passed end burst guard ramp period of {burstGuardRampPeriods[1]}, expected value in: {VALID_END_GUARD_PERIOD_OFFSETS}")
+ 
+    match int(burstGuardRampPeriods[1] / 2):
+        case 4:
+            # Discontinuous SB or NDB
+            downRamp = _raisedCosineFloat(4)
+        case 5:
+            # Continuous SB or NDB
+            downRamp = _raisedCosineFloat(5)
+        case 7:
+            # NUB or CB or LB
+            downRamp = _raisedCosineFloat(7)
+
+    envelope[-Nend:] = downRamp[::-1]
+
+    productI = I.astype(float32) * envelope.astype(float32)
+    productQ = Q.astype(float32) * envelope.astype(float32)
+
+    return productI.astype(float32), productQ.astype(float32)
+
+
+###################################################################################################
 class Transmitter(ABC):
     phaseReference = complex64(1 + 0j)
 
@@ -268,7 +457,18 @@ class Transmitter(ABC):
     halfband3State: ClassVar[NDArray]
 
     def __init__(self):
-        pass
+        global RAMPING_LUT_4
+        global RAMPING_LUT_5
+        global RAMPING_LUT_6
+        global RAMPING_LUT_7
+        global RAMPING_LUT_17
+        if len(RAMPING_LUT_4) == 0:
+            # Fill out the LUTs for usage when ramping
+            RAMPING_LUT_4 = _raisedCosineLUTQuantized(4)
+            RAMPING_LUT_5 = _raisedCosineLUTQuantized(5)
+            RAMPING_LUT_6 = _raisedCosineLUTQuantized(6)
+            RAMPING_LUT_7 = _raisedCosineLUTQuantized(7)
+            RAMPING_LUT_17 = _raisedCosineLUTQuantized(17)
 
     @abstractmethod
     def _basebandProcessing(self):
@@ -321,16 +521,16 @@ class realTransmitter(Transmitter):
         #1. Determine if prepending and/or postpending zeros to flush is required
 
         #1a. Continous with previous burst consideration:
-        if rampUpandDown[0]:
+        if burstGuardRampPeriods[0] != 0:
             # Since we ramp up, we are not continous with previous data, and must flush the FIRs with prepended zeros
-            processedInputData = concatenate((zeros(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, dtype=complex64), inputComplexSymbols))
+            processedInputData = concatenate((full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, fill_value=complex64(1 + 0j), dtype=complex64), inputComplexSymbols))
         else:
             processedInputData = inputComplexSymbols.copy()
         
         #1b. Continous with subsequent burst consideration:
-        if rampUpandDown[1]:
+        if burstGuardRampPeriods[1] != 0:
             # Since we ramp down at the end, we are not continous afterwards and should flush data with postpended zeros
-            processedInputData = concatenate((processedInputData, zeros(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, dtype=complex64)))
+            processedInputData = concatenate((processedInputData, full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, fill_value=complex64(1 + 0j), dtype=complex64)))
 
         #2. Upsample by x8 with zero insertions, and quantize data to Q1.17 fixed format stored in float32
         upSampledInputData = oversampleDataQuantized(processedInputData, 8)
@@ -373,18 +573,22 @@ class realTransmitter(Transmitter):
         Q_stage7Symbols, self.halfband3State[1] = _dspBlockFIRQuantizedStream(Q_stage6Symbols, FIR_HALFBAND3_Q1_17_COEFFICIENTS, self.halfband3State[1])
 
         #8. Extract useful part of burst
-        if rampUpandDown[0]:
+        if burstGuardRampPeriods[0] != 0:
             I_outputSymbols = I_stage7Symbols[(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR):].copy()
             Q_outputSymbols = Q_stage7Symbols[(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR):].copy()
         else:
             I_outputSymbols = I_stage7Symbols.copy()
             Q_outputSymbols = Q_stage7Symbols.copy()
         
-        if rampUpandDown[1]:
+        if burstGuardRampPeriods[1] != 0:
             I_outputSymbols = I_outputSymbols[:-(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR)].copy()
             Q_outputSymbols = Q_outputSymbols[:-(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR)].copy()
 
-        return I_outputSymbols, Q_outputSymbols
+        #9. Perform ramping on signal
+
+        I_rampedSymbols, Q_rampedSymbols = _powerRampingQuantized(I_outputSymbols, Q_outputSymbols, burstGuardRampPeriods)
+
+        return I_rampedSymbols, Q_rampedSymbols
 
 
     def _dacConversion(self):
@@ -403,7 +607,7 @@ class realTransmitter(Transmitter):
         # offset
         pass
     
-    def transmitBurst(self, burstbitSequence:NDArray[uint8], burstGuardRampPeriods:List, rampUpandDown:Tuple[bool, bool]=(True, True)):
+    def transmitBurst(self, burstbitSequence:NDArray[uint8], burstGuardRampPeriods:List):
         """
         """
         #1. Determine handling of input burstbitSequence
@@ -453,19 +657,19 @@ class realTransmitter(Transmitter):
         
         #3. Determine the state of the phase reference usage
         # if we are not ramping up at the start of the burst, then we can assume it is continous with a previous burst and use the the internal phase reference state
-        burstRampUpDownState = rampUpandDown
+        burstRampUpDownState = (burstGuardRampPeriods[0] != 0, burstGuardRampPeriods[1] != 0)
         burstPhaseReference = complex64(1 + 0j) if burstRampUpDownState[0] else self.phaseReference
         
         #4. Modulate the burst bits into 255 symbols
-        inputComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[0], burstbitSequence[1])) if halfSlotUsage else burstbitSequence, burstPhaseReference)
+        inputComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[0], burstbitSequence[1])) if halfSlotUsage else burstbitSequence, burstGuardRampPeriods, burstPhaseReference)
         # if we ramp down at the end, reset the phase reference for the next burst, if we don't ramp down then it is assume phase continous and we set the reference to the last symbol phase of the burst
         self.phaseReference = inputComplexSymbolsN[-1] if not burstRampUpDownState[1] else complex64(1 + 0j)
 
         #5. Pass modulated symbols and guard information to baseband processing function
-        Itemp, Qtemp = self._basebandProcessing(inputComplexSymbolsN, burstGuardRampPeriods, burstRampUpDownState)
+        Itempramp, Qtempramp = self._basebandProcessing(inputComplexSymbolsN, burstGuardRampPeriods, burstRampUpDownState)
         
 
-        return Itemp, Qtemp
+        return Itempramp, Qtempramp
 
 ###################################################################################################
 
@@ -476,23 +680,23 @@ class idealTransmitter(Transmitter):
     halfband2State = zeros(shape=(2,len(FIR_HALFBAND2_FLOAT_COEFFICIENTS)-1), dtype=float32)
     halfband3State = zeros(shape=(2,len(FIR_HALFBAND3_FLOAT_COEFFICIENTS)-1), dtype=float32)
     
-    def _basebandProcessing(self, inputComplexSymbols:NDArray[complex64], burstGuardRampPeriods:List, rampUpandDown:Tuple[bool, bool]=(True, True)) -> Tuple[NDArray[float32], NDArray[float32]]:
+    def _basebandProcessing(self, inputComplexSymbols:NDArray[complex64], burstGuardRampPeriods:List) -> Tuple[NDArray[float32], NDArray[float32]]:
         """
         Converts modulation bits into symbols, performs upsampling, ramping, and filtering using float data
         """
         #1. Determine if prepending and/or postpending zeros to flush is required
 
         #1a. Continous with previous burst consideration:
-        if rampUpandDown[0]:
+        if burstGuardRampPeriods[0] != 0:
             # Since we ramp up, we are not continous with previous data, and must flush the FIRs with prepended zeros
-            processedInputData = concatenate((zeros(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, dtype=complex64), inputComplexSymbols))
+            processedInputData = concatenate((full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, fill_value=complex64(1 + 0j), dtype=complex64), inputComplexSymbols))
         else:
             processedInputData = inputComplexSymbols.copy()
         
         #1b. Continous with subsequent burst consideration:
-        if rampUpandDown[1]:
+        if burstGuardRampPeriods[1] != 0:
             # Since we ramp down at the end, we are not continous afterwards and should flush data with postpended zeros
-            processedInputData = concatenate((processedInputData, zeros(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, dtype=complex64)))
+            processedInputData = concatenate((processedInputData, full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, fill_value=complex64(1 + 0j), dtype=complex64)))
 
         #2. Upsample by x8 with zero insertions, and quantize data to Q1.17 fixed format stored in float32
         upSampledInputData = oversampleDataFloat(processedInputData, 8)
@@ -535,18 +739,23 @@ class idealTransmitter(Transmitter):
         Q_stage7Symbols, self.halfband3State[1] = _dspBlockFIRFloatStream(Q_stage6Symbols, FIR_HALFBAND3_FLOAT_COEFFICIENTS, self.halfband3State[1])
 
         #8. Extract useful part of burst
-        if rampUpandDown[0]:
+        if burstGuardRampPeriods[0] != 0:
             I_outputSymbols = I_stage7Symbols[(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR):].copy()
             Q_outputSymbols = Q_stage7Symbols[(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR):].copy()
         else:
             I_outputSymbols = I_stage7Symbols.copy()
             Q_outputSymbols = Q_stage7Symbols.copy()
         
-        if rampUpandDown[1]:
+        if burstGuardRampPeriods[1] != 0:
             I_outputSymbols = I_outputSymbols[:-(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR)].copy()
             Q_outputSymbols = Q_outputSymbols[:-(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR)].copy()
 
-        return I_outputSymbols, Q_outputSymbols
+
+        #9. Perform ramping on signal
+
+        I_rampedSymbols, Q_rampedSymbols = _powerRampingFloat(I_outputSymbols, Q_outputSymbols, burstGuardRampPeriods)
+
+        return I_rampedSymbols, Q_rampedSymbols
 
 
     def _dacConversion(self):
@@ -565,7 +774,7 @@ class idealTransmitter(Transmitter):
         # offset
         pass
     
-    def transmitBurst(self, burstbitSequence:NDArray[uint8], burstGuardRampPeriods:List, rampUpandDown:Tuple[bool, bool]=(True, True)):
+    def transmitBurst(self, burstbitSequence:NDArray[uint8], burstGuardRampPeriods:List):
         """
         """
         #1. Determine handling of input burstbitSequence
@@ -615,18 +824,18 @@ class idealTransmitter(Transmitter):
         
         #3. Determine the state of the phase reference usage
         # if we are not ramping up at the start of the burst, then we can assume it is continous with a previous burst and use the the internal phase reference state
-        burstRampUpDownState = rampUpandDown
+        burstRampUpDownState = (burstGuardRampPeriods[0] != 0, burstGuardRampPeriods[1] != 0)
         burstPhaseReference = complex64(1 + 0j) if burstRampUpDownState[0] else self.phaseReference
         
         #4. Modulate the burst bits into 255 symbols
-        inputComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[0], burstbitSequence[1])) if halfSlotUsage else burstbitSequence, burstPhaseReference)
+        inputComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[0], burstbitSequence[1])) if halfSlotUsage else burstbitSequence, burstGuardRampPeriods, burstPhaseReference)
         # if we ramp down at the end, reset the phase reference for the next burst, if we don't ramp down then it is assume phase continous and we set the reference to the last symbol phase of the burst
         self.phaseReference = inputComplexSymbolsN[-1] if not burstRampUpDownState[1] else complex64(1 + 0j)
 
         #5. Pass modulated symbols and guard information to baseband processing function
-        Itemp, Qtemp = self._basebandProcessing(inputComplexSymbolsN, burstGuardRampPeriods, burstRampUpDownState)
+        Itempramp, Qtempramp = self._basebandProcessing(inputComplexSymbolsN, burstGuardRampPeriods)
         
-        return Itemp, Qtemp
+        return Itempramp, Qtempramp
 
 ###################################################################################################
 
