@@ -1,4 +1,5 @@
 from enum import Enum
+
 class PhyType(str, Enum):
     TRAFFIC_CHANNEL = "TP"
     CONTROL_CHANNEL = "CP"
@@ -43,3 +44,15 @@ class ChannelName(str, Enum):
 
 SUBSLOT_BIT_LENGTH = 255
 TIMESLOT_SYMBOL_LENGTH = 255
+
+# Control Modes
+class ControlMode(str, Enum):
+    NCM_CTRL_MODE = "NCM"       # Normal Control Mode
+    MC_CTRL_MODE = "MC"         # Minimum Control Mode
+
+# Transmission Modes
+class TransmissionMode(str, Enum):
+    D_CT_BS_MODE = "D-CT"       # Downlink-Continuous Transmission (D-CT)
+    D_CTT_BS_MODE = "D-CTT"     # Downlink-Carrier Timesharing Transmission (D-CTT)
+    D_MCCTT_BS_MODE = "D-MCCTT" # Downlink-Main Control Channel Timesharing Transmission (D-MCCTT)
+    U_MST_BS_MODE = "U-MST"     # Multiple Slot Transmission

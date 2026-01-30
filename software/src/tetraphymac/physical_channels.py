@@ -20,6 +20,8 @@ MULTIFRAME_DURATION_MS = 1020
 MULTIFRAME_BIT_COUNT = 36720
 # resulting modulation bit duration = 250/9 us
 
+PLUTO_SDR_DAC_BITS = 12
+
 FREQUENCY_CORRECTION_FIELD = array([1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
                               0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
                               0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -38,15 +40,6 @@ PHASE_ADJUSTMENT_SYMBOL_RANGE = {"a":(7,121), "b":(122,248), "c":(7,107), "d":(1
 
 TAIL_BITS = array([1, 1, 0, 0],dtype=uint8)
 
-# # Control Modes
-# NCM_CTRL_MODE = "NCM"       # Normal Control Mode
-# MC_CTRL_MODE = "MC"         # Minimum Control Mode
-
-# # Transmission Modes
-# D_CT_BS_MODE = "D-CT"       # Downlink-Continuous Transmission (D-CT)
-# D_CTT_BS_MODE = "D-CTT"     # Downlink-Carrier Timesharing Transmission (D-CTT)
-# D_MCCTT_BS_MODE = "D-MCCTT" # Downlink-Main Control Channel Timesharing Transmission (D-MCCTT)
-# U_MST_BS_MODE = "U-MST"     # Multiple Slot Transmission
 
 ###################################################################################################
 @dataclass(frozen=True, slots=True)
@@ -877,7 +870,7 @@ class Sync_Discont_Downlink_Burst(SynchronousDownlinkMixin, Burst):
 
 class Linearization_Uplink_Burst(Burst):
     SNmax = 240
-    startGuardBitPeriod = 0 # taken from Table 7, which is 119 symbols till SN0 (SN1 is 15 guard bits)
+    startGuardBitPeriod = 34 # not in the standard just chosen
     endGuardBitPeriod = 15
     subSlotWidth = 1
     linkDirection = LinkDirection.UPLINK
@@ -904,12 +897,12 @@ class Linearization_Uplink_Burst(Burst):
         d = self.startGuardBitPeriod
         burstBitSequence = empty(shape=(self.SNmax*2)+d+self.endGuardBitPeriod, dtype=uint8)
         burstBitSequence[0:d] = zeros(shape=self.startGuardBitPeriod, dtype=uint8)
-        burstBitSequence[d:238+d] = inputLogicalChannelSsn1.type5Blocks[0][:238]
+        burstBitSequence[d:206+d] = inputLogicalChannelSsn1.type5Blocks[0][:238]
         # End guard bits
-        burstBitSequence[d+238:255] = zeros(shape=self.endGuardBitPeriod, dtype=uint8) 
+        burstBitSequence[d+206:255] = zeros(shape=self.endGuardBitPeriod, dtype=uint8) 
 
-        self.burstStartRampPeriod = SUBSLOT_BIT_LENGTH-self.endGuardBitPeriod
-        self.burstEndRampPeriod = 15
+        self.burstStartRampPeriod = self.startGuardBitPeriod
+        self.burstEndRampPeriod = self.endGuardBitPeriod
 
         return burstBitSequence
 

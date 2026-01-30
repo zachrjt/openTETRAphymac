@@ -22,71 +22,7 @@ def channel_power(f, P, fc, B):
     half = B/2
     return bandpower(f, P, fc-half, fc+half)
 
-
-
-def main():
-
-    # below is as an example of using the low level classes to generate burst I and Q data
-
-    pkt_traffic_ch = lc.TCH_4_8(N=4)
-    pkt_traffic_ch.encodeType5Bits(pkt_traffic_ch.generateRndInput(4))
-
-    ul_tp_rf_channel = pc.Physical_Channel(1, False, 905.1, 918.1, pc.PhyType.TRAFFIC_CHANNEL)
-
-    ul_tp_burst = pc.Normal_Uplink_Burst(ul_tp_rf_channel, 1, 1, 1)
-    burst_modulation_bits = ul_tp_burst.constructBurstBitSequence(pkt_traffic_ch)
-    print(burst_modulation_bits)
-
-    tx_real = tetraMod.realTransmitter()
-    tx_ideal = tetraMod.idealTransmitter()
-
-    env_f = tetraMod._raisedCosineFloat(17)          # float32 0..1
-    env_q = (tetraMod.RAMPING_LUT_17 / (1<<17)).astype(np.float32)  # convert Q1.17 to float
-
-    fig, ax = plt.subplots(2,1, sharex=True)
-    ax[0].plot(env_f); ax[0].set_ylabel("env float"); ax[0].grid(True)
-    ax[1].plot(env_q); ax[1].set_ylabel("env quant"); ax[1].grid(True)
-    ax[1].set_xlabel("sample index")
-    plt.tight_layout(); plt.show()
-
-
-
-    I_real, Q_real  = tx_real.transmitBurst(burst_modulation_bits, [ul_tp_burst.burstStartRampPeriod, ul_tp_burst.burstEndRampPeriod])
-
-    I_ideal, Q_ideal = tx_ideal.transmitBurst(burst_modulation_bits, [ul_tp_burst.burstStartRampPeriod, ul_tp_burst.burstEndRampPeriod])
-    scale = float((1 << tetraMod.NUMBER_OF_FRACTIONAL_BITS))
-
-    I_real = I_real.astype(np.float32) / scale
-    Q_real = Q_real.astype(np.float32) / scale
-    yreal = (I_real) + 1.0j*(Q_real)
-    yreal = yreal.astype(np.complex64)
-
-    yideal = I_ideal + 1.0j*Q_ideal
-    yideal = yideal.astype(np.complex64)
-
-
-    # Envelope comparison
-    N = len(yreal) if (len(yreal) <= len(yideal)) else len(yideal)
-    Fs = (tetraMod.BASEBAND_SAMPLING_FACTOR * tetraMod.TETRA_SYMBOL_RATE)
-    t = np.arange(N) / Fs
-
-    env_real = 20*np.log10(np.abs(yreal[:N]) + 1e-12)
-    env_ideal = 20*np.log10(np.abs(yideal[:N]) + 1e-12)
-
-    fig, ax = plt.subplots(2,1,sharex=True)
-
-    ax[0].plot(t, env_ideal,     label="ideal no ramp")
-    ax[0].grid(True); ax[0].legend(); ax[0].set_ylabel("|y| (dB) ideal")
-
-    ax[1].plot(t, env_real,     label="quant no ramp")
-    ax[1].grid(True); ax[1].legend(); ax[1].set_ylabel("|y| (dB) quant")
-    ax[1].set_xlabel("Time (s)")
-    plt.tight_layout()
-    plt.show()
-
-
-
-    # Spectra comparison
+def spectrum_and_acpr(yreal, yideal, Fs):
     #windowReal = np.hanning(len(yreal))
     windowReal = np.ones(len(yreal), dtype=np.float32)
     #windowIdeal = np.hanning(len(yideal))
@@ -137,6 +73,106 @@ def main():
     plt.legend()
     plt.show()
 
+def power_envelope(yreal, yideal, Fs):
+    N = len(yreal) if (len(yreal) <= len(yideal)) else len(yideal)
+    t = np.arange(N) / Fs
+
+    env_real = 20*np.log10(np.abs(yreal[:N]) + 1e-12)
+    env_ideal = 20*np.log10(np.abs(yideal[:N]) + 1e-12)
+
+    fig, ax = plt.subplots(2,1,sharex=True)
+
+    ax[0].plot(t, env_ideal,     label="ideal no ramp")
+    ax[0].grid(True); ax[0].legend(); ax[0].set_ylabel("|y| (dB) ideal")
+
+    ax[1].plot(t, env_real,     label="quant no ramp")
+    ax[1].grid(True); ax[1].legend(); ax[1].set_ylabel("|y| (dB) quant")
+    ax[1].set_xlabel("Time (s)")
+    plt.tight_layout()
+    plt.show()
+
+
+def main():
+
+    tx_real = tetraMod.realTransmitter()
+    tx_ideal = tetraMod.idealTransmitter()
+
+    # below is as an example of using the low level classes to generate burst I and Q data
+
+    # pkt_traffic_ch = lc.TCH_4_8(N=4)
+    # pkt_traffic_ch.encodeType5Bits(pkt_traffic_ch.generateRndInput(4))
+
+    # ul_tp_rf_channel = pc.Physical_Channel(1, False, 905.1, 918.1, pc.PhyType.TRAFFIC_CHANNEL)
+
+    # ul_tp_burst = pc.Normal_Uplink_Burst(ul_tp_rf_channel, 1, 1, 1)
+    # burst_modulation_bits = ul_tp_burst.constructBurstBitSequence(pkt_traffic_ch)
+    # print(burst_modulation_bits)
+
+    
+
+    # I_real, Q_real  = tx_real.transmitBurst(burst_modulation_bits, [ul_tp_burst.burstStartRampPeriod, ul_tp_burst.burstEndRampPeriod])
+
+    # I_ideal, Q_ideal = tx_ideal.transmitBurst(burst_modulation_bits, [ul_tp_burst.burstStartRampPeriod, ul_tp_burst.burstEndRampPeriod])
+    # scale = float((1 << tetraMod.NUMBER_OF_FRACTIONAL_BITS))
+
+    # I_real = I_real.astype(np.float32) / scale
+    # Q_real = Q_real.astype(np.float32) / scale
+    # yreal = (I_real) + 1.0j*(Q_real)
+    # yreal = yreal.astype(np.complex64)
+
+    # yideal = I_ideal + 1.0j*Q_ideal
+    # yideal = yideal.astype(np.complex64)
+
+    # Fs = (tetraMod.BASEBAND_SAMPLING_FACTOR * tetraMod.TETRA_SYMBOL_RATE)
+
+    # # Envelope comparison
+    #power_envelope(yreal, yideal, Fs)
+
+    # # Spectra comparison
+    #spectrum_and_acpr(yreal, yideal, Fs)
+
+    #########################################################################################################
+
+    # Demonstrate subslot uplink burst usage
+    pkt_control_ch1 = lc.SCH_HU()
+    pkt_control_ch1.encodeType5Bits(pkt_control_ch1.generateRndInput(1))
+
+    pkt_control_ch2 = lc.SCH_HU()
+    pkt_control_ch2.encodeType5Bits(pkt_control_ch1.generateRndInput(1))
+
+    ul_cp_rf_channel = pc.Physical_Channel(4, False, 905.2, 918.2, pc.PhyType.CONTROL_CHANNEL)
+
+    ul_cp_burst = pc.Control_Uplink(ul_cp_rf_channel, 1, 1, 1)
+    sch_hu_burst1 = ul_cp_burst.constructBurstBitSequence(pkt_control_ch1)
+    # ul_null_burst = pc.Null_Halfslot_Uplink_Burst(ul_cp_rf_channel, 1, 1, 1)
+    # sch_hu_burst2 = ul_null_burst.constructBurstBitSequence()
+    sch_hu_burst2 = ul_cp_burst.constructBurstBitSequence(pkt_control_ch2)
+
+
+    print(len(sch_hu_burst1))
+    print(len(sch_hu_burst2))
+
+    burst_modulation_bits2 = np.stack((sch_hu_burst2, sch_hu_burst1))
+
+    I_real, Q_real  = tx_real.transmitBurst(burst_modulation_bits2, [ul_cp_burst.burstStartRampPeriod, ul_cp_burst.burstEndRampPeriod], [ul_cp_burst.burstStartRampPeriod, ul_cp_burst.burstEndRampPeriod])
+
+    I_ideal, Q_ideal = tx_ideal.transmitBurst(burst_modulation_bits2, [ul_cp_burst.burstStartRampPeriod, ul_cp_burst.burstEndRampPeriod], [ul_cp_burst.burstStartRampPeriod, ul_cp_burst.burstEndRampPeriod])
+    scale = float((1 << tetraMod.NUMBER_OF_FRACTIONAL_BITS))
+
+    I_real = I_real.astype(np.float32) / scale
+    Q_real = Q_real.astype(np.float32) / scale
+    yreal = (I_real) + 1.0j*(Q_real)
+    yreal = yreal.astype(np.complex64)
+
+    yideal = I_ideal + 1.0j*Q_ideal
+    yideal = yideal.astype(np.complex64)
+
+    Fs = (tetraMod.BASEBAND_SAMPLING_FACTOR * tetraMod.TETRA_SYMBOL_RATE)
+    # Envelope comparison
+    power_envelope(yreal, yideal, Fs)
+
+    # Spectrum comparison
+    spectrum_and_acpr(yreal, yideal, Fs)
 
 if __name__ == '__main__':
     main()

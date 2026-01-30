@@ -1,9 +1,9 @@
 # ZT - 2026
 # Based on EN 300 392-2 V2.4.2              
-from numpy import cumprod, complex64, pi, float64, uint8, mod, array, abs, sum, exp, zeros, float32
-from numpy import int64, uint8, empty, concatenate, round, convolve, right_shift, clip, arange, cos, full
+from numpy import cumprod, complex64, pi, float64, uint8, mod, array, abs, sum, exp, zeros, float32, max
+from numpy import int64, uint8, empty, concatenate, round, right_shift, clip, arange, cos, full, where
 from numpy.typing import NDArray
-import scipy as sp
+from scipy.signal import convolve
 from abc import ABC, abstractmethod
 from typing import ClassVar, Tuple, List
 from .constants import SUBSLOT_BIT_LENGTH, TIMESLOT_SYMBOL_LENGTH
@@ -15,6 +15,7 @@ GUARD_PERIOD_RAMP_BLANKING_SYMBOL_INTERVAL = 2
 NUMBER_OF_FRACTIONAL_BITS = 17
 
 BASEBAND_SAMPLING_FACTOR = 64
+HALF_BASEBAND_SAMPLING_FACTOR = int(BASEBAND_SAMPLING_FACTOR / 2)
 TETRA_SYMBOL_RATE = 18000
 
 RRC_Q1_17_COEFFICIENTS = array([94, 42, 69, 77, 61, 26, -21, -66, -96, -100, -73, -21, 45, 108, 150, 157, 123, 52, -39, -128, 
@@ -102,20 +103,39 @@ BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT = 30
 
 VALID_ROUNDING_METHODS = ('rti', 'rtz', 'truncate', 'unbiased')
 VALID_START_GUARD_PERIOD_OFFSETS = [10, 12, 34, 120]
-VALID_END_GUARD_PERIOD_OFFSETS = [8, 10, 14]
+VALID_END_GUARD_PERIOD_OFFSETS = [8, 10, 14, 16]
 
 RAMPING_LUT_4 = []
 RAMPING_LUT_5 = []
 RAMPING_LUT_6 = []
 RAMPING_LUT_7 = []
+RAMPING_LUT_8 = []
 RAMPING_LUT_17 = []
 RAMPING_LUT_240 = []
+
+###################################################################################################
+
+def saveBurstasIQ(inputData: NDArray[int64] | NDArray[float32]):
+    pass
 
 ###################################################################################################
 
 def calculatePhaseAdjustmentBits(inputData: NDArray[uint8], 
                                  inclusiveIndices:tuple[int, int],
                                  guardOffset:int=0) -> NDArray[uint8]:
+    """
+    Modulates input data within the inclusiveIndices accounting for a guardoffset, to determine the total 
+    cummulative phase and returns the correct bit pair that would set the cumulative phase to zero
+    
+    :param inputData: Binary 1's and 0's input to evaluate total Pi/4-dqpsk phase angle over
+    :type inputData: NDArray[uint8]
+    :param inclusiveIndices: The start and stop indices (inclusive) to evaluate the cumulative phase
+    :type inclusiveIndices: tuple[int, int]
+    :param guardOffset: An offset to account for an initial guard period in input data, offsets inclusive indices
+    :type guardOffset: int
+    :return: Returns two bits that if added into the cumulative phase calculation results in the cumulative phase being zero
+    :rtype: NDArray[uint8]
+    """
     assert inputData.ndim == 1
     assert inputData.size % 2 == 0 # must have even number of bits
 
@@ -202,6 +222,12 @@ def oversampleDataQuantized(inputData: NDArray[complex64], overSampleRate:int) -
     outputData[1][0::overSampleRate] = tempQvalues.astype(int64)
     return outputData
 
+###################################################################################################
+
+def assertTailGoesToZero(I, Q, samples):
+    tailP = I[-samples:].astype(int64)**2 + Q[-samples:].astype(int64)**2
+    if max(tailP) != 0:
+        raise RuntimeError("Burst tail is not fully gated to zero.")
 
 ###################################################################################################
 
@@ -221,18 +247,33 @@ def _q17Rounding(multiplierResult:NDArray[int64], rounding:str = "rti"):
     y = multiplierResult.copy()
     match rounding:
         case "rti":
-            # Round to Infinity by adding 2^16 and right shifting by 17 bits
+            # ECP5 FPGA style Round to Infinity by adding 2^16 and right shifting by 17 bits
             y += int64(1 << (NUMBER_OF_FRACTIONAL_BITS-1))
         case "rtz":
-            # Round to Zero by adding (2^16 - 1)
+            # ECP5 FPGA style Round to Zero by adding (2^16 - 1)
             y += int64((1 << (NUMBER_OF_FRACTIONAL_BITS-1))-1)
         case "truncate":
             pass
         case "unbiased":
-            # TODO: Implement nonbiased rounding
-            raise NotImplementedError
+            # Software only implementation of Bankers rounding, unbiased
+            sign = where(y < 0, int64(-1), int64(1))
+            a = abs(y)
+            trunc = right_shift(a, NUMBER_OF_FRACTIONAL_BITS) # floor
+            rem = a & int64((1 << NUMBER_OF_FRACTIONAL_BITS) - 1) # remainder bits
+            half = int64(1 << (NUMBER_OF_FRACTIONAL_BITS - 1))
+
+            gt = rem > half
+            eq = rem == half
+
+            # if exactly halfway, round up only if we are even value
+            inc = gt | (eq & ((trunc & 1) == 1))
+
+            trunc = trunc + inc.astype(int64)
+            return trunc * sign
     
     return right_shift(y, NUMBER_OF_FRACTIONAL_BITS)
+
+###################################################################################################
 
 def _dspBlockFIRQuantizedStream(inputSymbols:NDArray[int64], hCoef:NDArray[int64], 
                                inputState: NDArray[int64] | None = None) -> Tuple[NDArray[int64], NDArray[int64]]:
@@ -252,7 +293,7 @@ def _dspBlockFIRQuantizedStream(inputSymbols:NDArray[int64], hCoef:NDArray[int64
     inputDataExt = concatenate((inputState, inputSymbols))
 
     # Stream the convolution results, note that prepended values come from state/memory of FIR from previous burst
-    fullAccumulated = sp.signal.convolve(inputDataExt, hCoef, mode="full", method="direct").astype(int64)
+    fullAccumulated = convolve(inputDataExt, hCoef, method="direct", mode="full").astype(int64)
 
     # Data-aligned segment:
     burstSegment = fullAccumulated[(Ntaps-1):(Ntaps-1 + inputSymbols.size)].copy()
@@ -288,7 +329,7 @@ def _dspBlockFIRFloatStream(inputSymbols:NDArray[float32], hCoef:NDArray[float32
     inputDataExt = concatenate((inputState, inputSymbols))
 
     # Stream the convolution results, note that prepended values come from state/memory of FIR from previous burst
-    fullAccumulated = convolve(inputDataExt, hCoef, mode="full").astype(float32)
+    fullAccumulated = convolve(inputDataExt, hCoef, method="direct", mode="full").astype(float32)
 
     # Data-aligned segment:
     burstSegment = fullAccumulated[(Ntaps-1):(Ntaps-1 + inputSymbols.size)].copy()
@@ -378,6 +419,8 @@ def _powerRampingQuantized(I:NDArray[int64], Q:NDArray[int64],
         case 7:
             # NUB or CB or LB
             downRamp = RAMPING_LUT_7
+        case 8:
+            downRamp = RAMPING_LUT_8
 
     envelope[-Nend:] = downRamp[::-1]
 
@@ -437,6 +480,8 @@ def _powerRampingFloat(I:NDArray[float32], Q:NDArray[float32],
         case 7:
             # NUB or CB or LB
             downRamp = _raisedCosineFloat(7)
+        case 8:
+            downRamp = _raisedCosineFloat(8)
 
     envelope[-Nend:] = downRamp[::-1]
 
@@ -461,6 +506,7 @@ class Transmitter(ABC):
         global RAMPING_LUT_5
         global RAMPING_LUT_6
         global RAMPING_LUT_7
+        global RAMPING_LUT_8
         global RAMPING_LUT_17
         if len(RAMPING_LUT_4) == 0:
             # Fill out the LUTs for usage when ramping
@@ -468,21 +514,22 @@ class Transmitter(ABC):
             RAMPING_LUT_5 = _raisedCosineLUTQuantized(5)
             RAMPING_LUT_6 = _raisedCosineLUTQuantized(6)
             RAMPING_LUT_7 = _raisedCosineLUTQuantized(7)
+            RAMPING_LUT_8 = _raisedCosineLUTQuantized(8)
             RAMPING_LUT_17 = _raisedCosineLUTQuantized(17)
 
     @abstractmethod
-    def _basebandProcessing(self):
+    def _basebandProcessing(self, inputComplexSymbols:NDArray[complex64], burstGuardRampPeriods:List) -> Tuple[NDArray, NDArray]:
         """
         Converts modulation bits into symbols, performs upsampling, ramping, and filtering
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def _dacConversion(self):
         """
         Converts baseband processed data into dac code representation, 
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def _analogReconstruction(self):
@@ -493,20 +540,132 @@ class Transmitter(ABC):
         # coupling
         # gain error
         # offset
-
-        pass
+        raise NotImplementedError
     
-    @abstractmethod
-    def transmitBurst(self):
+    def transmitBurst(self, burstbitSequence:NDArray[uint8], burstGuardRampPeriods:List, 
+                      subslot2RampPeriods:List | None = None) -> Tuple[NDArray, NDArray]:
         """
-        Wrapper that calls and links functions that perform conversion of modulation bits to real float data
         """
-        pass
+        #1. Determine handling of input burstbitSequence
+
+        nBlocks = 0
+        halfSlotUsage = False
+        nullSubslot = None
+
+        if burstbitSequence.ndim == 2:
+            # multiple slot bursts or subslot bursts passed
+            if burstbitSequence.shape[1] == SUBSLOT_BIT_LENGTH:
+                # Passed 2 sublots for a single burst, acceptable
+                # If the blocks are only SUBLOT length, then we are transmitting a single full slot burst
+                # Could be of form: [CB, empty], [LB, CB], [empty, CB], or [LB, empty]
+                if burstbitSequence.shape[0] != 2:
+                    raise ValueError(f"Passed {burstbitSequence.shape[0]} subslots to transmit, expected exactly 2 to handle subslot tx")
+                else:
+                    # Determine where/if there is a null subslot
+                    if (burstbitSequence[0] == 0).all():
+                        nullSubslot = 0
+                        nBlocks = 1
+                    elif (burstbitSequence[1] == 0).all():
+                        nullSubslot = 1
+                        nBlocks = 1
+                    else:
+                        # There are no empty subslots
+                        nBlocks = 2
+                    
+                    halfSlotUsage = True
+            else:
+                raise ValueError(f"Passed {burstbitSequence.shape[1]} modulation bits, expected 2 subslots of length {(SUBSLOT_BIT_LENGTH)}")
+        
+        elif burstbitSequence.ndim == 1 and burstbitSequence.size == (2*SUBSLOT_BIT_LENGTH):
+            # Passed only one full slot burst, acceptable
+            nBlocks = 1
+        else:
+            raise ValueError(f"Passed burstbitSequences of shape: {burstbitSequence.shape}, invalid number of dimensions or invalid number of modulation bits")
+
+        # Allocate an output array for the burst data
+        outputBBSignal = empty(shape=(1, (TIMESLOT_SYMBOL_LENGTH * BASEBAND_SAMPLING_FACTOR * TETRA_SYMBOL_RATE)), dtype=complex64)
+
+        #2. Check if half slot
+        if halfSlotUsage:
+            # Single burst made from 1 or 2 subslots, need to add prepend or postpend extra modulation bit to ensure even number of bits
+            # In the case of subslot, we need to manage the different cases, but generaly we modulate and ramp each half slot individually
+            # However, both subslot techincally share 1 common symbol at the end of SUB1 and start of SUB2, we know because of ramping this will always be zero so it is not the biggest deal
+            burstPhaseReference = complex64(1 + 0j)
+            if nBlocks == 2 and subslot2RampPeriods is not None:
+                # we have two subslot bursts to modulate indepedently. nut 
+                burstGuardRampPeriods[1] += 1 # must increment the end guard period of the first subslot burst to account for the need for the additional modulation bit
+                subslot2RampPeriods[1] += 1   # must increment the end guard period of the first subslot burst to account for the need for the additional modulation bit
+
+                sbs1ComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[0], zeros(1, dtype=uint8))), burstGuardRampPeriods, burstPhaseReference)
+                sbs2ComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[1], zeros(1, dtype=uint8))), subslot2RampPeriods, burstPhaseReference)
+
+                Isbs1, Qsbs1 = self._basebandProcessing(sbs1ComplexSymbolsN, burstGuardRampPeriods)
+                Isbs2, Qsbs2 = self._basebandProcessing(sbs2ComplexSymbolsN, subslot2RampPeriods)
+
+                # concatenate the two subslot, indexing such that the extra tail modulation bits are eliminated
+                # is in subslot 1 and the other 32/64 is in subslot 2
+                assertTailGoesToZero(Isbs1, Qsbs1, HALF_BASEBAND_SAMPLING_FACTOR)
+                assertTailGoesToZero(Isbs2, Qsbs2, HALF_BASEBAND_SAMPLING_FACTOR)
+
+                Itempramp = concatenate((Isbs1[:Isbs1.size - HALF_BASEBAND_SAMPLING_FACTOR], Isbs2[:Isbs2.size - HALF_BASEBAND_SAMPLING_FACTOR]))
+                Qtempramp = concatenate((Qsbs1[:Qsbs1.size - HALF_BASEBAND_SAMPLING_FACTOR], Qsbs2[:Qsbs2.size - HALF_BASEBAND_SAMPLING_FACTOR]))
+
+            elif nullSubslot == 0 and subslot2RampPeriods is not None:
+                # First subslot is null burst, while second subslot is real burst
+                subslot2RampPeriods[1] += 1
+                sbs2ComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[1], zeros(1, dtype=uint8))), subslot2RampPeriods, burstPhaseReference)
+                Isbs2, Qsbs2 = self._basebandProcessing(sbs2ComplexSymbolsN, subslot2RampPeriods)
+
+                # generate equivalent number of zeros to fill null sublot
+                Isbs1 = zeros((SUBSLOT_BIT_LENGTH+1)*64, dtype=(int64 if type(self) is realTransmitter else float32))
+                Qsbs1 = zeros((SUBSLOT_BIT_LENGTH+1)*64, dtype=(int64 if type(self) is realTransmitter else float32))
+
+                assertTailGoesToZero(Isbs2, Qsbs2, HALF_BASEBAND_SAMPLING_FACTOR)
+
+                Itempramp = concatenate((Isbs1[:Isbs1.size - HALF_BASEBAND_SAMPLING_FACTOR], Isbs2[:Isbs2.size - HALF_BASEBAND_SAMPLING_FACTOR]))
+                Qtempramp = concatenate((Qsbs1[:Qsbs1.size - HALF_BASEBAND_SAMPLING_FACTOR], Qsbs2[:Qsbs2.size - HALF_BASEBAND_SAMPLING_FACTOR]))
+
+            elif nullSubslot == 1:
+                # Second subslot is null burst, while first subslot is real burst
+                # must index the end guard period of the real burst to account for the need for an additional modulation bit
+                burstGuardRampPeriods[1] += 1
+                sbs1ComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[0], zeros(1, dtype=uint8))), burstGuardRampPeriods, burstPhaseReference)
+                Isbs1, Qsbs1 = self._basebandProcessing(sbs1ComplexSymbolsN, burstGuardRampPeriods)
+
+                # generate equivalent number of zeros to fill null sublot
+                Isbs2 = zeros((SUBSLOT_BIT_LENGTH+1)*64, dtype=(int64 if type(self) is realTransmitter else float32))
+                Qsbs2 = zeros((SUBSLOT_BIT_LENGTH+1)*64, dtype=(int64 if type(self) is realTransmitter else float32))
+
+                assertTailGoesToZero(Isbs1, Qsbs1, HALF_BASEBAND_SAMPLING_FACTOR)
+
+                Itempramp = concatenate((Isbs1[:Isbs1.size - HALF_BASEBAND_SAMPLING_FACTOR], Isbs2[:Isbs2.size - HALF_BASEBAND_SAMPLING_FACTOR]))
+                Qtempramp = concatenate((Qsbs1[:Qsbs1.size - HALF_BASEBAND_SAMPLING_FACTOR], Qsbs2[:Qsbs2.size - HALF_BASEBAND_SAMPLING_FACTOR]))
+
+            else:
+                raise ValueError(f"subslot2RampPeriod cannot be None, using the second subslot it is expected to represent the bit interval if odd")
+
+        else:
+            #3. Determine the state of the phase reference usage
+            # if we are not ramping up at the start of the burst, then we can assume it is continous with a previous burst and use the the internal phase reference state
+            burstRampUpDownState = (burstGuardRampPeriods[0] != 0, burstGuardRampPeriods[1] != 0)
+            burstPhaseReference = complex64(1 + 0j) if burstRampUpDownState[0] else self.phaseReference
+            
+            #4. Modulate the burst bits into 255 symbols
+            inputComplexSymbolsN = dqpskModulator(burstbitSequence, burstGuardRampPeriods, burstPhaseReference)
+            # if we ramp down at the end, reset the phase reference for the next burst, if we don't ramp down then it is assume phase continous and we set the reference to the last symbol phase of the burst
+            self.phaseReference = inputComplexSymbolsN[-1] if not burstRampUpDownState[1] else complex64(1 + 0j)
+
+            #5. Pass modulated symbols and guard information to baseband processing function
+            Itempramp, Qtempramp = self._basebandProcessing(inputComplexSymbolsN, burstGuardRampPeriods)
+        
+
+        return Itempramp, Qtempramp
 
 
 ###################################################################################################
 
 class realTransmitter(Transmitter):
+
 
     rrcFilterState = zeros(shape=(2,len(RRC_Q1_17_COEFFICIENTS)-1), dtype=int64)
     lpfFilterState = zeros(shape=(2,len(FIR_LPF_Q1_17_COEFFICIENTS)-1), dtype=int64)
@@ -514,7 +673,7 @@ class realTransmitter(Transmitter):
     halfband2State = zeros(shape=(2,len(FIR_HALFBAND2_Q1_17_COEFFICIENTS)-1), dtype=int64)
     halfband3State = zeros(shape=(2,len(FIR_HALFBAND3_Q1_17_COEFFICIENTS)-1), dtype=int64)
     
-    def _basebandProcessing(self, inputComplexSymbols:NDArray[complex64], burstGuardRampPeriods:List, rampUpandDown:Tuple[bool, bool]=(True, True)) -> Tuple[NDArray[int64], NDArray[int64]]:
+    def _basebandProcessing(self, inputComplexSymbols:NDArray[complex64], burstGuardRampPeriods:List) -> Tuple[NDArray[int64], NDArray[int64]]:
         """
         Converts modulation bits into symbols, performs upsampling, ramping, and filtering using quantized data
         """
@@ -607,69 +766,7 @@ class realTransmitter(Transmitter):
         # offset
         pass
     
-    def transmitBurst(self, burstbitSequence:NDArray[uint8], burstGuardRampPeriods:List):
-        """
-        """
-        #1. Determine handling of input burstbitSequence
 
-        nBlocks = 0
-        halfSlotUsage = False
-        nullSubslot = None
-
-        if burstbitSequence.ndim == 2:
-            # multiple slot bursts or subslot bursts passed
-            if burstbitSequence.shape[1] == SUBSLOT_BIT_LENGTH:
-                # Passed 2 sublots for a single burst, acceptable
-                # If the blocks are only SUBLOT length, then we are transmitting a single full slot burst
-                # Could be of form: [CB, empty], [LB, CB], [empty, CB], or [LB, empty]
-                if burstbitSequence.shape[0] != 2:
-                    raise ValueError(f"Passed {burstbitSequence.shape[0]} subslots to transmit, expected exactly 2 to handle subslot tx")
-                else:
-                    # Determine where/if there is a null subslot
-                    if (burstbitSequence[0] == 0).all():
-                        nullSubslot = [0]
-                        nBlocks = 1
-                    elif (burstbitSequence[1] == 0).all():
-                        nullSubslot = [1]
-                        nBlocks = 1
-                    else:
-                        # There are no empty subslots
-                        nBlocks = 2
-                    
-                    halfSlotUsage = True
-            else:
-                raise ValueError(f"Passed {burstbitSequence.shape[1]} modulation bits, expected 2 subslots of length {(SUBSLOT_BIT_LENGTH)}")
-        
-        elif burstbitSequence.ndim == 1 and burstbitSequence.size == (2*SUBSLOT_BIT_LENGTH):
-            # Passed only one full slot burst, acceptable
-            nBlocks = 1
-        else:
-            raise ValueError(f"Passed burstbitSequences of shape: {burstbitSequence.shape}, invalid number of dimensions or invalid number of modulation bits")
-
-        # Allocate an output array for the burst data
-        outputBBSignal = empty(shape=(1, (TIMESLOT_SYMBOL_LENGTH * BASEBAND_SAMPLING_FACTOR * TETRA_SYMBOL_RATE)), dtype=complex64)
-
-        #2. Check if half slot
-        if halfSlotUsage:
-            # Single burst made from 1 or 2 subslots, need to add prepend or postpend extra modulation bit to ensure even number of bits
-            # TODO: Implement subslot tx handling
-            raise NotImplementedError
-        
-        #3. Determine the state of the phase reference usage
-        # if we are not ramping up at the start of the burst, then we can assume it is continous with a previous burst and use the the internal phase reference state
-        burstRampUpDownState = (burstGuardRampPeriods[0] != 0, burstGuardRampPeriods[1] != 0)
-        burstPhaseReference = complex64(1 + 0j) if burstRampUpDownState[0] else self.phaseReference
-        
-        #4. Modulate the burst bits into 255 symbols
-        inputComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[0], burstbitSequence[1])) if halfSlotUsage else burstbitSequence, burstGuardRampPeriods, burstPhaseReference)
-        # if we ramp down at the end, reset the phase reference for the next burst, if we don't ramp down then it is assume phase continous and we set the reference to the last symbol phase of the burst
-        self.phaseReference = inputComplexSymbolsN[-1] if not burstRampUpDownState[1] else complex64(1 + 0j)
-
-        #5. Pass modulated symbols and guard information to baseband processing function
-        Itempramp, Qtempramp = self._basebandProcessing(inputComplexSymbolsN, burstGuardRampPeriods, burstRampUpDownState)
-        
-
-        return Itempramp, Qtempramp
 
 ###################################################################################################
 
@@ -773,69 +870,6 @@ class idealTransmitter(Transmitter):
         # gain error
         # offset
         pass
-    
-    def transmitBurst(self, burstbitSequence:NDArray[uint8], burstGuardRampPeriods:List):
-        """
-        """
-        #1. Determine handling of input burstbitSequence
-
-        nBlocks = 0
-        halfSlotUsage = False
-        nullSubslot = None
-
-        if burstbitSequence.ndim == 2:
-            # multiple slot bursts or subslot bursts passed
-            if burstbitSequence.shape[1] == SUBSLOT_BIT_LENGTH:
-                # Passed 2 sublots for a single burst, acceptable
-                # If the blocks are only SUBLOT length, then we are transmitting a single full slot burst
-                # Could be of form: [CB, empty], [LB, CB], [empty, CB], or [LB, empty]
-                if burstbitSequence.shape[0] != 2:
-                    raise ValueError(f"Passed {burstbitSequence.shape[0]} subslots to transmit, expected exactly 2 to handle subslot tx")
-                else:
-                    # Determine where/if there is a null subslot
-                    if (burstbitSequence[0] == 0).all():
-                        nullSubslot = [0]
-                        nBlocks = 1
-                    elif (burstbitSequence[1] == 0).all():
-                        nullSubslot = [1]
-                        nBlocks = 1
-                    else:
-                        # There are no empty subslots
-                        nBlocks = 2
-                    
-                    halfSlotUsage = True
-            else:
-                raise ValueError(f"Passed {burstbitSequence.shape[1]} modulation bits, expected 2 subslots of length {(SUBSLOT_BIT_LENGTH)}")
-        
-        elif burstbitSequence.ndim == 1 and burstbitSequence.size == (2*SUBSLOT_BIT_LENGTH):
-            # Passed only one full slot burst, acceptable
-            nBlocks = 1
-        else:
-            raise ValueError(f"Passed burstbitSequences of shape: {burstbitSequence.shape}, invalid number of dimensions or invalid number of modulation bits")
-
-        # Allocate an output array for the burst data
-        outputBBSignal = empty(shape=(1, (TIMESLOT_SYMBOL_LENGTH * BASEBAND_SAMPLING_FACTOR * TETRA_SYMBOL_RATE)), dtype=complex64)
-
-        #2. Check if half slot
-        if halfSlotUsage:
-            # Single burst made from 1 or 2 subslots, need to add prepend or postpend extra modulation bit to ensure even number of bits
-            # TODO: Implement subslot tx handling
-            raise NotImplementedError
-        
-        #3. Determine the state of the phase reference usage
-        # if we are not ramping up at the start of the burst, then we can assume it is continous with a previous burst and use the the internal phase reference state
-        burstRampUpDownState = (burstGuardRampPeriods[0] != 0, burstGuardRampPeriods[1] != 0)
-        burstPhaseReference = complex64(1 + 0j) if burstRampUpDownState[0] else self.phaseReference
-        
-        #4. Modulate the burst bits into 255 symbols
-        inputComplexSymbolsN = dqpskModulator(concatenate((burstbitSequence[0], burstbitSequence[1])) if halfSlotUsage else burstbitSequence, burstGuardRampPeriods, burstPhaseReference)
-        # if we ramp down at the end, reset the phase reference for the next burst, if we don't ramp down then it is assume phase continous and we set the reference to the last symbol phase of the burst
-        self.phaseReference = inputComplexSymbolsN[-1] if not burstRampUpDownState[1] else complex64(1 + 0j)
-
-        #5. Pass modulated symbols and guard information to baseband processing function
-        Itempramp, Qtempramp = self._basebandProcessing(inputComplexSymbolsN, burstGuardRampPeriods)
-        
-        return Itempramp, Qtempramp
 
 ###################################################################################################
 
