@@ -1,6 +1,6 @@
 # ZT - 2026
 # Based on EN 300 392-2 V2.4.2              
-from numpy import complex64, pi, float64, uint8, array, abs, zeros, float32, max, int16, vstack
+from numpy import complex64, pi, float64, uint8, array, abs, zeros, float32, max, int16, vstack, rint, mean
 from numpy import int64, uint8, empty, concatenate, round, right_shift, clip, arange, cos, full, where, left_shift, ravel, fromfile, sqrt
 from numpy.typing import NDArray
 from scipy.signal import convolve
@@ -228,13 +228,6 @@ def readIQData(filepath:str, outputType:str="int64", dacBits:int=PLUTOSDR_DAC_BI
     
     return I_copy, Q_copy
 
-
-
-
-###################################################################################################
-
-
-
 ###################################################################################################
 
 def oversampleDataQuantized(inputData: NDArray[complex64], overSampleRate:int) -> NDArray[int64]:
@@ -258,34 +251,41 @@ def assertTailGoesToZero(I, Q, samples):
 
 def oversampleDataFloat(inputData: NDArray[complex64], overSampleRate:int) -> NDArray[float32]:
     outputData = zeros(shape=(2, inputData.size*overSampleRate), dtype=float32)
-    tempIvalues = inputData.real
-    tempQvalues = inputData.imag
+    tempIvalues = inputData.real.astype(float32)
+    tempQvalues = inputData.imag.astype(float32)
     outputData[0][0::overSampleRate] = tempIvalues.astype(float32)
     outputData[1][0::overSampleRate] = tempQvalues.astype(float32)
     return outputData
 
 ###################################################################################################
 
-def _q17Rounding(multiplierResult:NDArray[int64], rounding:str = "rti"):
+def _q17Rounding(multiplierResult:NDArray[int64], rounding:str = "rti", rightShift:int=NUMBER_OF_FRACTIONAL_BITS):
+    """
+    Performs rounding on int64 object after accumulation during convolution
+    """
     if rounding not in VALID_ROUNDING_METHODS:
         raise ValueError(f"Rounding method passed of {rounding} invalid, expected type in: {VALID_ROUNDING_METHODS}")
-    y = multiplierResult.copy()
+
+    if right_shift == 0:
+        raise ValueError(f"Right shift value of: {right_shift}, invalid")
+    
+    y = multiplierResult.astype(int64, copy=True)
     match rounding:
         case "rti":
             # ECP5 FPGA style Round to Infinity by adding 2^16 and right shifting by 17 bits
-            y += int64(1 << (NUMBER_OF_FRACTIONAL_BITS-1))
+            y += int64(1 << (rightShift-1))
         case "rtz":
             # ECP5 FPGA style Round to Zero by adding (2^16 - 1)
-            y += int64((1 << (NUMBER_OF_FRACTIONAL_BITS-1))-1)
+            y += int64((1 << (rightShift-1))-1)
         case "truncate":
             pass
         case "unbiased":
             # Software only implementation of Bankers rounding, unbiased
             sign = where(y < 0, int64(-1), int64(1))
             a = abs(y)
-            trunc = right_shift(a, NUMBER_OF_FRACTIONAL_BITS) # floor
-            rem = a & int64((1 << NUMBER_OF_FRACTIONAL_BITS) - 1) # remainder bits
-            half = int64(1 << (NUMBER_OF_FRACTIONAL_BITS - 1))
+            trunc = right_shift(a, rightShift) # floor
+            rem = a & int64((1 << rightShift) - 1) # remainder bits
+            half = int64(1 << (rightShift - 1))
 
             gt = rem > half
             eq = rem == half
@@ -296,16 +296,19 @@ def _q17Rounding(multiplierResult:NDArray[int64], rounding:str = "rti"):
             trunc = trunc + inc.astype(int64)
             return trunc * sign
     
-    return right_shift(y, NUMBER_OF_FRACTIONAL_BITS)
+    return right_shift(y, rightShift)
 
 ###################################################################################################
 
 def _dspBlockFIRQuantizedStream(inputSymbols:NDArray[int64], hCoef:NDArray[int64], 
-                               inputState: NDArray[int64] | None = None) -> Tuple[NDArray[int64], NDArray[int64]]:
+                               inputState: NDArray[int64] | None = None,
+                               gain:int=1) -> Tuple[NDArray[int64], NDArray[int64]]:
     '''
     Handles the convolution process with continous state control, 
     but models the 54bit accumulation results and subsequent truncation and rounding down to Q1.17
     '''
+    if gain not in [1, 2, 4, 8]:
+        raise ValueError(f"Passed gain value: {gain}, is not 1 or multiple of 2.")
 
     Ntaps = hCoef.size
     if inputState is not None:
@@ -324,8 +327,13 @@ def _dspBlockFIRQuantizedStream(inputSymbols:NDArray[int64], hCoef:NDArray[int64
     burstSegment = fullAccumulated[(Ntaps-1):(Ntaps-1 + inputSymbols.size)].copy()
     # The rounding implemented is not pure unbiased rounding due to behaviour with negative values, however it provides
     # greater precision than pure truncation and are the only methods available on the ECP5 DSP slices
+    
+    if gain == 1:
+        shiftValue = NUMBER_OF_FRACTIONAL_BITS
+    else:
+        shiftValue = int(NUMBER_OF_FRACTIONAL_BITS - (gain // 2))
 
-    outputAccumulated = _q17Rounding(burstSegment)
+    outputAccumulated = _q17Rounding(burstSegment, rightShift=shiftValue)
 
     # Saturate output incase of clipping, it is not expected for this to occur due to the FIR gains and such
     outputAccumulated = clip(outputAccumulated, -(1<<NUMBER_OF_FRACTIONAL_BITS), (1<<NUMBER_OF_FRACTIONAL_BITS)-1).astype(int64)
@@ -338,11 +346,14 @@ def _dspBlockFIRQuantizedStream(inputSymbols:NDArray[int64], hCoef:NDArray[int64
 ###################################################################################################
 
 def _dspBlockFIRFloatStream(inputSymbols:NDArray[float32], hCoef:NDArray[float32], 
-                               inputState: NDArray[float32] | None = None) -> Tuple[NDArray[float32], NDArray[float32]]:
+                               inputState: NDArray[float32] | None = None,
+                               gain:int=1) -> Tuple[NDArray[float32], NDArray[float32]]:
     '''
-    Handles the convolution process with continous state control
+    Handles the convolution process with continous state control but uses float32 values
     '''
-
+    if gain not in [1, 2, 4, 8]:
+        raise ValueError(f"Passed gain value: {gain}, is not 1 or multiple of 2.")
+    
     Ntaps = hCoef.size
     if inputState is not None:
         if inputState.size != (Ntaps - 1):
@@ -359,12 +370,16 @@ def _dspBlockFIRFloatStream(inputSymbols:NDArray[float32], hCoef:NDArray[float32
     # Data-aligned segment:
     burstSegment = fullAccumulated[(Ntaps-1):(Ntaps-1 + inputSymbols.size)].copy()
 
+    # Gain
+    burstSegment *= gain
+
     # The new state of the FIR is the last Ntaps-1 values of what was passed
     newState = fullAccumulated[-(Ntaps-1):].copy()
 
     return burstSegment, newState
 
 ###################################################################################################
+
 def _raisedCosineLUTQuantized(N: int, sps:int=BASEBAND_SAMPLING_FACTOR) -> NDArray[int64]:
     # We want the last symbol to constant envelope, so we are not ramping during it
     # therefore we calculate using N-2 to account for this
@@ -695,8 +710,8 @@ class Transmitter(ABC):
             return Itempramp, Qtempramp
 
 
-        #6. 
-
+        #6. Convert to DAC representation and perform ZOH at higher sampling rate
+        
         return Itempramp, Qtempramp
 
 
@@ -716,11 +731,13 @@ class realTransmitter(Transmitter):
         Converts modulation bits into symbols, performs upsampling, ramping, and filtering using quantized data
         """
         #1. Determine if prepending and/or postpending zeros to flush is required
-
+        sOffset = 0
+        eOffset = 0
         #1a. Continous with previous burst consideration:
         if burstGuardRampPeriods[0] != 0:
             # Since we ramp up, we are not continous with previous data, and must flush the FIRs with prepended zeros
             processedInputData = concatenate((full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, fill_value=complex64(1 + 0j), dtype=complex64), inputComplexSymbols))
+            sOffset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
         else:
             processedInputData = inputComplexSymbols.copy()
         
@@ -728,54 +745,79 @@ class realTransmitter(Transmitter):
         if burstGuardRampPeriods[1] != 0:
             # Since we ramp down at the end, we are not continous afterwards and should flush data with postpended zeros
             processedInputData = concatenate((processedInputData, full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT, fill_value=complex64(1 + 0j), dtype=complex64)))
+            eOffset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
+
+        i_temp = processedInputData.real.astype(int64, copy=True)
+        q_temp = processedInputData.imag.astype(int64, copy=True)
+
+        mag = sqrt(i_temp[(sOffset):len(i_temp)-(eOffset)].astype(float64)**2 + q_temp[(sOffset):len(q_temp)-(eOffset)].astype(float64)**2)
+        print("Pre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
 
         #2. Upsample by x8 with zero insertions, and quantize data to Q1.17 fixed format stored in float32
         upSampledInputData = oversampleDataQuantized(processedInputData, 8)
 
+
         #3. Perform RRC filtering
         I_stage1Symbols = upSampledInputData[0].copy()
         Q_stage1Symbols = upSampledInputData[1].copy()
+       
+        I_stage2Symbols, self.rrcFilterState[0] = _dspBlockFIRQuantizedStream(I_stage1Symbols, RRC_Q1_17_COEFFICIENTS, self.rrcFilterState[0], gain=4)
+        Q_stage2Symbols, self.rrcFilterState[1] = _dspBlockFIRQuantizedStream(Q_stage1Symbols, RRC_Q1_17_COEFFICIENTS, self.rrcFilterState[1], gain=4)
 
-        I_stage2Symbols, self.rrcFilterState[0] = _dspBlockFIRQuantizedStream(I_stage1Symbols, RRC_Q1_17_COEFFICIENTS, self.rrcFilterState[0])
-        Q_stage2Symbols, self.rrcFilterState[1] = _dspBlockFIRQuantizedStream(Q_stage1Symbols, RRC_Q1_17_COEFFICIENTS, self.rrcFilterState[1])
+        mag = sqrt(I_stage2Symbols[(sOffset*8):len(I_stage2Symbols)-(eOffset*8)].astype(float64)**2 + Q_stage2Symbols[(sOffset*8):len(Q_stage2Symbols)-(eOffset*8)].astype(float64)**2)
+        print("Post RRC ", "peakFS: ", mag.max()/(1<<17), "rmsFS: ", sqrt(mean(mag**2))/(1<<17))
 
         #4. Perform cleanup LPF'ing
         I_stage3Symbols, self.lpfFilterState[0] = _dspBlockFIRQuantizedStream(I_stage2Symbols, FIR_LPF_Q1_17_COEFFICIENTS, self.lpfFilterState[0])
         Q_stage3Symbols, self.lpfFilterState[1] = _dspBlockFIRQuantizedStream(Q_stage2Symbols, FIR_LPF_Q1_17_COEFFICIENTS, self.lpfFilterState[1])
 
+        mag = sqrt(I_stage3Symbols[(sOffset*8):len(I_stage3Symbols)-(eOffset*8)].astype(float64)**2 + Q_stage3Symbols[(sOffset*8):len(Q_stage3Symbols)-(eOffset*8)].astype(float64)**2)
+        print("Post Cleanup ", "peakFS: ", mag.max()/(1<<17), "rmsFS: ", sqrt(mean(mag**2))/(1<<17))
+
         #5. Perform x2 upsampling with zero insertions and filter - Part 1
         I_stage4Symbols = zeros(shape=(2*I_stage3Symbols.size), dtype=int64)
         I_stage4Symbols[::2] = I_stage3Symbols
-        I_stage5Symbols = zeros(shape=(2*I_stage4Symbols.size), dtype=int64)
-        I_stage5Symbols[::2], self.halfband1State[0] = _dspBlockFIRQuantizedStream(I_stage4Symbols, FIR_HALFBAND1_Q1_17_COEFFICIENTS, self.halfband1State[0])
+        I_stage5Symbols, self.halfband1State[0] = _dspBlockFIRQuantizedStream(I_stage4Symbols, FIR_HALFBAND1_Q1_17_COEFFICIENTS, self.halfband1State[0], gain=2)
 
         Q_stage4Symbols = zeros(shape=(2*Q_stage3Symbols.size), dtype=int64)
         Q_stage4Symbols[::2] = Q_stage3Symbols
-        Q_stage5Symbols = zeros(shape=(2*Q_stage4Symbols.size), dtype=int64)
-        Q_stage5Symbols[::2], self.halfband1State[1] = _dspBlockFIRQuantizedStream(Q_stage4Symbols, FIR_HALFBAND1_Q1_17_COEFFICIENTS, self.halfband1State[1])
+        Q_stage5Symbols, self.halfband1State[1] = _dspBlockFIRQuantizedStream(Q_stage4Symbols, FIR_HALFBAND1_Q1_17_COEFFICIENTS, self.halfband1State[1], gain=2)
 
+        mag = sqrt(I_stage5Symbols[(sOffset*16):len(I_stage5Symbols)-(eOffset*16)].astype(float64)**2 + Q_stage5Symbols[(sOffset*16):len(Q_stage5Symbols)-(eOffset*16)].astype(float64)**2)
+        print("Post halfband-1 ", "peakFS: ", mag.max()/(1<<17), "rmsFS: ", sqrt(mean(mag**2))/(1<<17))
+        
         #6. Perform x2 upsampling with zero insertions and filter - Part 2
         I_stage6Symbols = zeros(shape=(2*I_stage5Symbols.size), dtype=int64)
-        I_stage6Symbols[::2], self.halfband2State[0] = _dspBlockFIRQuantizedStream(I_stage5Symbols, FIR_HALFBAND2_Q1_17_COEFFICIENTS, self.halfband2State[0])
+        I_stage6Symbols[::2] = I_stage5Symbols
+        I_stage7Symbols, self.halfband2State[0] = _dspBlockFIRQuantizedStream(I_stage6Symbols, FIR_HALFBAND2_Q1_17_COEFFICIENTS, self.halfband2State[0], gain=2)
 
         Q_stage6Symbols = zeros(shape=(2*Q_stage5Symbols.size), dtype=int64)
-        Q_stage6Symbols[::2], self.halfband2State[1] = _dspBlockFIRQuantizedStream(Q_stage5Symbols, FIR_HALFBAND2_Q1_17_COEFFICIENTS, self.halfband2State[1])
+        Q_stage6Symbols[::2] = Q_stage5Symbols
+        Q_stage7Symbols, self.halfband2State[1] = _dspBlockFIRQuantizedStream(Q_stage6Symbols, FIR_HALFBAND2_Q1_17_COEFFICIENTS, self.halfband2State[1], gain=2)
         
+        mag = sqrt(I_stage7Symbols[(sOffset*32):len(I_stage7Symbols)-(eOffset*32)].astype(float64)**2 + Q_stage7Symbols[(sOffset*32):len(Q_stage7Symbols)-(eOffset*32)].astype(float64)**2)
+        print("Post halfband-2 ", "peakFS: ", mag.max()/(1<<17), "rmsFS: ", sqrt(mean(mag**2))/(1<<17))
         
         #7. Perform x2 upsampling with zero insertions and filter - Part 3
-        I_stage7Symbols= zeros(shape=(I_stage6Symbols.size), dtype=int64)
-        I_stage7Symbols, self.halfband3State[0] = _dspBlockFIRQuantizedStream(I_stage6Symbols, FIR_HALFBAND3_Q1_17_COEFFICIENTS, self.halfband3State[0])
+        I_stage8Symbols = zeros(shape=(2*I_stage7Symbols.size), dtype=int64)
+        I_stage8Symbols[::2] = I_stage7Symbols
+        I_stage9Symbols, self.halfband3State[0] = _dspBlockFIRQuantizedStream(I_stage8Symbols, FIR_HALFBAND3_Q1_17_COEFFICIENTS, self.halfband3State[0], gain=2)
 
-        Q_stage7Symbols = zeros(shape=(Q_stage6Symbols.size), dtype=int64)
-        Q_stage7Symbols, self.halfband3State[1] = _dspBlockFIRQuantizedStream(Q_stage6Symbols, FIR_HALFBAND3_Q1_17_COEFFICIENTS, self.halfband3State[1])
+
+        Q_stage8Symbols = zeros(shape=(2*Q_stage7Symbols.size), dtype=int64)
+        Q_stage8Symbols[::2] = Q_stage7Symbols
+        Q_stage9Symbols, self.halfband3State[1] = _dspBlockFIRQuantizedStream(Q_stage8Symbols, FIR_HALFBAND3_Q1_17_COEFFICIENTS, self.halfband3State[1], gain=2)
+
+        mag = sqrt(I_stage9Symbols[(sOffset*64):len(I_stage9Symbols)-(eOffset*64)].astype(float64)**2 + Q_stage9Symbols[(sOffset*64):len(Q_stage9Symbols)-(eOffset*64)].astype(float64)**2)
+        print("Post halfband-3 ", "peakFS: ", mag.max()/(1<<17), "rmsFS: ", sqrt(mean(mag**2))/(1<<17))
 
         #8. Extract useful part of burst
         if burstGuardRampPeriods[0] != 0:
-            I_outputSymbols = I_stage7Symbols[(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR):].copy()
-            Q_outputSymbols = Q_stage7Symbols[(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR):].copy()
+            I_outputSymbols = I_stage9Symbols[(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR):].copy()
+            Q_outputSymbols = Q_stage9Symbols[(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR):].copy()
         else:
-            I_outputSymbols = I_stage7Symbols.copy()
-            Q_outputSymbols = Q_stage7Symbols.copy()
+            I_outputSymbols = I_stage9Symbols.copy()
+            Q_outputSymbols = Q_stage9Symbols.copy()
         
         if burstGuardRampPeriods[1] != 0:
             I_outputSymbols = I_outputSymbols[:-(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*BASEBAND_SAMPLING_FACTOR)].copy()
@@ -784,6 +826,10 @@ class realTransmitter(Transmitter):
         #9. Perform ramping on signal
 
         I_rampedSymbols, Q_rampedSymbols = _powerRampingQuantized(I_outputSymbols, Q_outputSymbols, burstGuardRampPeriods)
+
+        mag = sqrt(I_rampedSymbols.astype(float64)**2 + Q_rampedSymbols.astype(float64)**2)
+        print("Post ramping ", "peakFS: ", mag.max()/(1<<17), "rmsFS: ", sqrt(mean(mag**2))/(1<<17))
+
 
         return I_rampedSymbols, Q_rampedSymbols
 
@@ -840,8 +886,8 @@ class idealTransmitter(Transmitter):
         I_stage1Symbols = upSampledInputData[0].copy()
         Q_stage1Symbols = upSampledInputData[1].copy()
 
-        I_stage2Symbols, self.rrcFilterState[0] = _dspBlockFIRFloatStream(I_stage1Symbols, RRC_FLOAT_COEFFICIENTS, self.rrcFilterState[0])
-        Q_stage2Symbols, self.rrcFilterState[1] = _dspBlockFIRFloatStream(Q_stage1Symbols, RRC_FLOAT_COEFFICIENTS, self.rrcFilterState[1])
+        I_stage2Symbols, self.rrcFilterState[0] = _dspBlockFIRFloatStream(I_stage1Symbols, RRC_FLOAT_COEFFICIENTS, self.rrcFilterState[0], gain=4)
+        Q_stage2Symbols, self.rrcFilterState[1] = _dspBlockFIRFloatStream(Q_stage1Symbols, RRC_FLOAT_COEFFICIENTS, self.rrcFilterState[1], gain=4)
 
         #4. Perform cleanup LPF'ing
         I_stage3Symbols, self.lpfFilterState[0] = _dspBlockFIRFloatStream(I_stage2Symbols, FIR_LPF_FLOAT_COEFFICIENTS, self.lpfFilterState[0])
@@ -851,27 +897,27 @@ class idealTransmitter(Transmitter):
         I_stage4Symbols = zeros(shape=(2*I_stage3Symbols.size), dtype=float32)
         I_stage4Symbols[::2] = I_stage3Symbols
         I_stage5Symbols = zeros(shape=(2*I_stage4Symbols.size), dtype=float32)
-        I_stage5Symbols[::2], self.halfband1State[0] = _dspBlockFIRFloatStream(I_stage4Symbols, FIR_HALFBAND1_FLOAT_COEFFICIENTS, self.halfband1State[0])
+        I_stage5Symbols[::2], self.halfband1State[0] = _dspBlockFIRFloatStream(I_stage4Symbols, FIR_HALFBAND1_FLOAT_COEFFICIENTS, self.halfband1State[0], gain=2)
 
         Q_stage4Symbols = zeros(shape=(2*Q_stage3Symbols.size), dtype=float32)
         Q_stage4Symbols[::2] = Q_stage3Symbols
         Q_stage5Symbols = zeros(shape=(2*Q_stage4Symbols.size), dtype=float32)
-        Q_stage5Symbols[::2], self.halfband1State[1] = _dspBlockFIRFloatStream(Q_stage4Symbols, FIR_HALFBAND1_FLOAT_COEFFICIENTS, self.halfband1State[1])
+        Q_stage5Symbols[::2], self.halfband1State[1] = _dspBlockFIRFloatStream(Q_stage4Symbols, FIR_HALFBAND1_FLOAT_COEFFICIENTS, self.halfband1State[1], gain=2)
 
         #6. Perform x2 upsampling with zero insertions and filter - Part 2
         I_stage6Symbols = zeros(shape=(2*I_stage5Symbols.size), dtype=float32)
-        I_stage6Symbols[::2], self.halfband2State[0] = _dspBlockFIRFloatStream(I_stage5Symbols, FIR_HALFBAND2_FLOAT_COEFFICIENTS, self.halfband2State[0])
+        I_stage6Symbols[::2], self.halfband2State[0] = _dspBlockFIRFloatStream(I_stage5Symbols, FIR_HALFBAND2_FLOAT_COEFFICIENTS, self.halfband2State[0], gain=2)
 
         Q_stage6Symbols = zeros(shape=(2*Q_stage5Symbols.size), dtype=float32)
-        Q_stage6Symbols[::2], self.halfband2State[1] = _dspBlockFIRFloatStream(Q_stage5Symbols, FIR_HALFBAND2_FLOAT_COEFFICIENTS, self.halfband2State[1])
+        Q_stage6Symbols[::2], self.halfband2State[1] = _dspBlockFIRFloatStream(Q_stage5Symbols, FIR_HALFBAND2_FLOAT_COEFFICIENTS, self.halfband2State[1], gain=2)
         
         
         #7. Perform x2 upsampling with zero insertions and filter - Part 3
         I_stage7Symbols= zeros(shape=(I_stage6Symbols.size), dtype=float32)
-        I_stage7Symbols, self.halfband3State[0] = _dspBlockFIRFloatStream(I_stage6Symbols, FIR_HALFBAND3_FLOAT_COEFFICIENTS, self.halfband3State[0])
+        I_stage7Symbols, self.halfband3State[0] = _dspBlockFIRFloatStream(I_stage6Symbols, FIR_HALFBAND3_FLOAT_COEFFICIENTS, self.halfband3State[0], gain=2)
 
         Q_stage7Symbols = zeros(shape=(Q_stage6Symbols.size), dtype=float32)
-        Q_stage7Symbols, self.halfband3State[1] = _dspBlockFIRFloatStream(Q_stage6Symbols, FIR_HALFBAND3_FLOAT_COEFFICIENTS, self.halfband3State[1])
+        Q_stage7Symbols, self.halfband3State[1] = _dspBlockFIRFloatStream(Q_stage6Symbols, FIR_HALFBAND3_FLOAT_COEFFICIENTS, self.halfband3State[1], gain=2)
 
         #8. Extract useful part of burst
         if burstGuardRampPeriods[0] != 0:

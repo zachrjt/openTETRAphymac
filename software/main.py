@@ -77,8 +77,8 @@ def power_envelope(yreal, yideal, Fs):
     N = len(yreal) if (len(yreal) <= len(yideal)) else len(yideal)
     t = np.arange(N) / Fs
 
-    env_real = 20*np.log10((np.abs(yreal[:N])) + 1e-12)
-    env_ideal = 20*np.log10((np.abs(yideal[:N])) + 1e-12)
+    env_real = 20*np.log10(np.abs(yreal[:N]) + 1e-12)
+    env_ideal = 20*np.log10(np.abs(yideal[:N]) + 1e-12)
 
     fig, ax = plt.subplots(2,1,sharex=True)
 
@@ -112,6 +112,14 @@ def main():
     I_real, Q_real  = tx_real.transmitBurst(burst_modulation_bits, [ul_tp_burst.burstStartRampPeriod, ul_tp_burst.burstEndRampPeriod])
 
     I_ideal, Q_ideal = tx_ideal.transmitBurst(burst_modulation_bits, [ul_tp_burst.burstStartRampPeriod, ul_tp_burst.burstEndRampPeriod])
+
+    #Demonstrate .iq file saving ability
+    # data = np.vstack((I_real, Q_real))
+    # _ = tetraTx.saveBurstasIQ(data, "iqData.iq", endian="little")
+    # i_data, q_data = tetraTx.readIQData("iqData.iq", MSBaligned=True, endian="little")
+    # I_real = i_data.copy()
+    # Q_real = q_data.copy()
+
     scale = float((1 << tetraTx.NUMBER_OF_FRACTIONAL_BITS))
 
     I_real = I_real.astype(np.float32) / scale
@@ -157,8 +165,8 @@ def main():
 
     # I_ideal, Q_ideal = tx_ideal.transmitBurst(burst_modulation_bits2, [ul_cp_burst.burstStartRampPeriod, ul_cp_burst.burstEndRampPeriod], [ul_cp_burst.burstStartRampPeriod, ul_cp_burst.burstEndRampPeriod])
     
-    # data = np.vstack((I_real, Q_real))
     # # Demonstrate .iq file saving ability
+    # data = np.vstack((I_real, Q_real))
     # # sIQ_data = tetraTx.saveBurstasIQ(data, "iqData.iq")
     # # i_data, q_data = tetraTx.readIQData("iqData.iq", MSBaligned=True)
     # # I_real = i_data.copy()
