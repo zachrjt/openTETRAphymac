@@ -114,11 +114,11 @@ def main():
     I_ideal, Q_ideal = tx_ideal.transmitBurst(burst_modulation_bits, [ul_tp_burst.burstStartRampPeriod, ul_tp_burst.burstEndRampPeriod])
 
     #Demonstrate .iq file saving ability
-    # data = np.vstack((I_real, Q_real))
-    # _ = tetraTx.saveBurstasIQ(data, "iqData.iq", endian="little")
-    # i_data, q_data = tetraTx.readIQData("iqData.iq", MSBaligned=True, endian="little")
-    # I_real = i_data.copy()
-    # Q_real = q_data.copy()
+    data = np.vstack((I_real, Q_real))
+    _ = tetraTx.saveBurstasIQ(data, "iqData.iq", endian="little")
+    i_data, q_data = tetraTx.readIQData("iqData.iq", MSBaligned=True, endian="little")
+    I_real = i_data.copy()
+    Q_real = q_data.copy()
 
     scale = float((1 << tetraTx.NUMBER_OF_FRACTIONAL_BITS))
 
