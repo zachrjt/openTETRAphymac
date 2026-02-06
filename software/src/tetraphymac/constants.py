@@ -1,14 +1,22 @@
 from enum import Enum
 
+######## PHYSICAL CHANNEL CONSTANTS ##########
+# Enum use to wrap the valid types of physical channel
 class PhyType(str, Enum):
     TRAFFIC_CHANNEL = "TP"
     CONTROL_CHANNEL = "CP"
     UNASGN_CHANNEL = "UP"
 
+# Enum used to wrap the valid link directions for physical channels
 class LinkDirection(str, Enum):
+    """LinkDirection 
+    """
     UPLINK = "UL"
     DOWNLINK = "DL"
+#############################################
 
+############## BURST CONSTANTS ##############
+# Enum used to wrap a description for what kind of burst
 class BurstContent(str, Enum):
     BURST_TRAFFIC_TYPE = "traffic"
     BURST_CONTROL_TYPE = "control"
@@ -18,7 +26,9 @@ class BurstContent(str, Enum):
 class SlotLength(str, Enum):
     HALF_SUBSLOT = "half"
     FULL_SUBSLOT = "full"
+#############################################
 
+######## LOGICAL CHANNEL CONSTANTS ##########
 class ChannelKind(str, Enum):
     TRAFFIC_TYPE = "traffic"
     CONTROL_TYPE = "control"
@@ -45,6 +55,9 @@ class ChannelName(str, Enum):
 SUBSLOT_BIT_LENGTH = 255
 TIMESLOT_SYMBOL_LENGTH = 255
 
+#############################################
+
+########### MAC LAYER CONSTANTS #############
 # Control Modes
 class ControlMode(str, Enum):
     NCM_CTRL_MODE = "NCM"       # Normal Control Mode
@@ -56,3 +69,10 @@ class TransmissionMode(str, Enum):
     D_CTT_BS_MODE = "D-CTT"     # Downlink-Carrier Timesharing Transmission (D-CTT)
     D_MCCTT_BS_MODE = "D-MCCTT" # Downlink-Main Control Channel Timesharing Transmission (D-MCCTT)
     U_MST_BS_MODE = "U-MST"     # Multiple Slot Transmission
+
+#############################################
+
+########## TRANSCIEVER CONSTANTS ############
+BASEBAND_SAMPLING_FACTOR = 64 # The culmative oversampling factor of bb procesing
+
+#############################################

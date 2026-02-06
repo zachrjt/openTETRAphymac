@@ -1,10 +1,11 @@
+# pylint: skip-file
 import sys
 import pytest
-import numpy as np
 from pathlib import Path
 module_path = Path(__file__).resolve().parent.parent
 if str(module_path) not in sys.path:
     sys.path.append(str(module_path))
+import numpy as np
 
 import src.tetraphymac.logical_channels as lc
 import src.tetraphymac.physical_channels as bursts
@@ -15,8 +16,8 @@ np.random.seed(10)
 
 def makeLogicalChannel(ChannelCLs, **kwargs):
     ch = ChannelCLs(**kwargs)
-    inputData = ch.generateRndInput(1)
-    ch.encodeType5Bits(inputData)
+    inputData = ch.generate_rnd_input(1)
+    ch.encode_type5_bits(inputData)
     return ch
     
 
@@ -24,12 +25,12 @@ def makeLogicalChannel(ChannelCLs, **kwargs):
 def makePhysicalChannel():
     # specific frequencies and main carrier, and channel number current don't affect behaviour
     def _mk(channel_type: bursts.PhyType):
-        return bursts.Physical_Channel(
-            channelNumber=1,
-            mainCarrier=False,
-            UL_Frequency=905.025,
-            DL_Frequency=918.025,
-            channelType=channel_type
+        return bursts.PhysicalChannel(
+            channel_number=1,
+            main_carrier=False,
+            ul_frequency=905.025,
+            dl_frequency=918.025,
+            channel_type=channel_type
         )
     
     return _mk
@@ -61,9 +62,9 @@ NORMAL_VALID = [
 
 NORMAL_INVALID = [
     # name, phy, MN, FN, TN, bkn1_fn, bkn2_fn
-    ("tch_on_cp_invalid", "CP", 1, 1, 1, lambda: makeLogicalChannel(lc.TCH_4_8, N=1), None),
+    ("tch_on_cp_invalid", "CP", 1, 1, 1, lambda: makeLogicalChannel(lc.TCH_4_8, n=1), None),
     ("schf_on_tp_wrong_fn", "TP", 1, 1, 1, lambda: makeLogicalChannel(lc.SCH_F), None),
-    ("stch_tch_on_cp_invalid", "CP", 1, 1, 1, lambda: makeLogicalChannel(lc.STCH), lambda: makeLogicalChannel(lc.TCH_4_8, N=1)),
+    ("stch_tch_on_cp_invalid", "CP", 1, 1, 1, lambda: makeLogicalChannel(lc.STCH), lambda: makeLogicalChannel(lc.TCH_4_8, n=1)),
     ("schhd_bnch_cp_fn18_modwrong", "CP", 1, 18, 1, lambda: makeLogicalChannel(lc.SCH_HD), lambda: makeLogicalChannel(lc.BNCH)),  # (1+1)%4=2
 ]
 
@@ -76,9 +77,9 @@ def test_normal_cont_downlink_valid(makePhysicalChannel, name, phy, MN, FN, TN, 
     bbk  = makeLogicalChannel(lc.AACH)  # AACH always present
     bkn2 = None if bkn2_fn is None else bkn2_fn()
 
-    burst = bursts.Normal_Cont_Downlink_Burst(phy_obj, MN, FN, TN)
-    out = burst.constructBurstBitSequence(bkn1, bbk, bkn2, rampUpandDown=(False, False))
-    assert len(out) == (burst.SNmax * 2) + burst.startGuardBitPeriod + burst.endGuardBitPeriod
+    burst = bursts.NormalContDownlinkBurst(phy_obj, MN, FN, TN)
+    out = burst.construct_burst_sequence(bkn1, bbk, bkn2, ramp_up_down_state=(False, False))
+    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
 
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,bkn1_fn,bkn2_fn", NORMAL_VALID, ids=lambda x: x if isinstance(x, str) else None)
@@ -90,35 +91,35 @@ def test_normal_discont_downlink_valid(makePhysicalChannel, name, phy, MN, FN, T
     bbk  = makeLogicalChannel(lc.AACH)  # AACH always present
     bkn2 = None if bkn2_fn is None else bkn2_fn()
 
-    burst = bursts.Normal_Discont_Downlink_Burst(phy_obj, MN, FN, TN)
-    out = burst.constructBurstBitSequence(bkn1, bbk, bkn2, rampUpandDown=(False, False))
-    assert len(out) == (burst.SNmax * 2) + burst.startGuardBitPeriod + burst.endGuardBitPeriod
+    burst = bursts.NormalDiscontDownlinkBurst(phy_obj, MN, FN, TN)
+    out = burst.construct_burst_sequence(bkn1, bbk, bkn2, ramp_up_down_state=(False, False))
+    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
 
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,bkn1_fn,bkn2_fn", NORMAL_INVALID, ids=lambda x: x if isinstance(x, str) else None)
 def test_normal_cont_downlink_invalid(makePhysicalChannel, name, phy, MN, FN, TN, bkn1_fn, bkn2_fn):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Normal_Cont_Downlink_Burst(phy_obj, MN, FN, TN)
+    burst = bursts.NormalContDownlinkBurst(phy_obj, MN, FN, TN)
 
     bkn1 = bkn1_fn()
     bbk  = makeLogicalChannel(lc.AACH)
     bkn2 = None if bkn2_fn is None else bkn2_fn()
 
     with pytest.raises(ValueError):
-        burst.constructBurstBitSequence(bkn1, bbk, bkn2, rampUpandDown=(False, False))
+        burst.construct_burst_sequence(bkn1, bbk, bkn2, ramp_up_down_state=(False, False))
 
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,bkn1_fn,bkn2_fn", NORMAL_INVALID, ids=lambda x: x if isinstance(x, str) else None)
 def test_normal_discont_downlink_invalid(makePhysicalChannel, name, phy, MN, FN, TN, bkn1_fn, bkn2_fn):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Normal_Discont_Downlink_Burst(phy_obj, MN, FN, TN)
+    burst = bursts.NormalDiscontDownlinkBurst(phy_obj, MN, FN, TN)
 
     bkn1 = bkn1_fn()
     bbk  = makeLogicalChannel(lc.AACH)
     bkn2 = None if bkn2_fn is None else bkn2_fn()
 
     with pytest.raises(ValueError):
-        burst.constructBurstBitSequence(bkn1, bbk, bkn2, rampUpandDown=(False, False))
+        burst.construct_burst_sequence(bkn1, bbk, bkn2, ramp_up_down_state=(False, False))
         
 
 ###################################################################################################
@@ -180,15 +181,15 @@ SYNC_INVALID_INIT = [
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SBcls,BKN2cls", SYNC_VALID, ids=lambda x: x if isinstance(x, str) else None)
 def test_sync_cont_downlink_valid(makePhysicalChannel, name, phy, MN, FN, TN, SBcls, BKN2cls):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Sync_Cont_Downlink_Burst(phy_obj, MN, FN, TN)
+    burst = bursts.SyncContDownlinkBurst(phy_obj, MN, FN, TN)
 
     sb   = makeLogicalChannel(SBcls)
     bbk  = makeLogicalChannel(lc.AACH)
     bkn2 = makeLogicalChannel(BKN2cls)
 
-    out = burst.constructBurstBitSequence(sb, bbk, bkn2, rampUpandDown=(False, False))
+    out = burst.construct_burst_sequence(sb, bbk, bkn2, ramp_up_down_state=(False, False))
 
-    assert len(out) == (burst.SNmax * 2) + burst.startGuardBitPeriod + burst.endGuardBitPeriod
+    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
 
     # Synchronous downlink anchor: FREQ correction [14:94]
     assert np.array_equal(out[14:94], bursts.FREQUENCY_CORRECTION_FIELD)
@@ -198,15 +199,15 @@ def test_sync_cont_downlink_valid(makePhysicalChannel, name, phy, MN, FN, TN, SB
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SBcls,BKN2cls", SYNC_VALID, ids=lambda x: x if isinstance(x, str) else None)
 def test_sync_discont_downlink_valid(makePhysicalChannel, name, phy, MN, FN, TN, SBcls, BKN2cls):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Sync_Discont_Downlink_Burst(phy_obj, MN, FN, TN)
+    burst = bursts.SyncDiscontDownlinkBurst(phy_obj, MN, FN, TN)
 
     sb   = makeLogicalChannel(SBcls)
     bbk  = makeLogicalChannel(lc.AACH)
     bkn2 = makeLogicalChannel(BKN2cls)
 
-    out = burst.constructBurstBitSequence(sb, bbk, bkn2, rampUpandDown=(False, False))
+    out = burst.construct_burst_sequence(sb, bbk, bkn2, ramp_up_down_state=(False, False))
 
-    assert len(out) == (burst.SNmax * 2) + burst.startGuardBitPeriod + burst.endGuardBitPeriod
+    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
 
     # Synchronous downlink anchor: FREQ correction [14:94]
     assert np.array_equal(out[14:94], bursts.FREQUENCY_CORRECTION_FIELD)
@@ -217,39 +218,39 @@ def test_sync_discont_downlink_valid(makePhysicalChannel, name, phy, MN, FN, TN,
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SBcls,BKN2cls",SYNC_INVALID_BUILD,ids=lambda x: x if isinstance(x, str) else None)
 def test_sync_cont_downlink_invalid_build(makePhysicalChannel, name, phy, MN, FN, TN, SBcls, BKN2cls):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Sync_Cont_Downlink_Burst(phy_obj, MN, FN, TN)
+    burst = bursts.SyncContDownlinkBurst(phy_obj, MN, FN, TN)
 
     sb   = makeLogicalChannel(SBcls)
     bbk  = makeLogicalChannel(lc.AACH)
     bkn2 = makeLogicalChannel(BKN2cls)
 
     with pytest.raises(ValueError):
-        burst.constructBurstBitSequence(sb, bbk, bkn2, rampUpandDown=(False, False))
+        burst.construct_burst_sequence(sb, bbk, bkn2, ramp_up_down_state=(False, False))
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SBcls,BKN2cls",SYNC_INVALID_BUILD,ids=lambda x: x if isinstance(x, str) else None)
 def test_sync_discont_downlink_invalid_build(makePhysicalChannel, name, phy, MN, FN, TN, SBcls, BKN2cls):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Sync_Discont_Downlink_Burst(phy_obj, MN, FN, TN)
+    burst = bursts.SyncDiscontDownlinkBurst(phy_obj, MN, FN, TN)
 
     sb   = makeLogicalChannel(SBcls)
     bbk  = makeLogicalChannel(lc.AACH)
     bkn2 = makeLogicalChannel(BKN2cls)
 
     with pytest.raises(ValueError):
-        burst.constructBurstBitSequence(sb, bbk, bkn2, rampUpandDown=(False, False))
+        burst.construct_burst_sequence(sb, bbk, bkn2, ramp_up_down_state=(False, False))
 
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SBcls,BKN2cls",SYNC_INVALID_INIT,ids=lambda x: x if isinstance(x, str) else None)
 def test_sync_cont_downlink_invalid_init(makePhysicalChannel, name, phy, MN, FN, TN, SBcls, BKN2cls):
     phy_obj = makePhysicalChannel(phy)
     with pytest.raises(ValueError):
-        bursts.Sync_Cont_Downlink_Burst(phy_obj, MN, FN, TN)
+        bursts.SyncContDownlinkBurst(phy_obj, MN, FN, TN)
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SBcls,BKN2cls",SYNC_INVALID_INIT,ids=lambda x: x if isinstance(x, str) else None)
 def test_sync_discont_downlink_invalid_init(makePhysicalChannel, name, phy, MN, FN, TN, SBcls, BKN2cls):
     phy_obj = makePhysicalChannel(phy)
     with pytest.raises(ValueError):
-        bursts.Sync_Discont_Downlink_Burst(phy_obj, MN, FN, TN)
+        bursts.SyncDiscontDownlinkBurst(phy_obj, MN, FN, TN)
 
 ###################################################################################################
 
@@ -299,14 +300,14 @@ CTRL_UL_INVALID_BUILD = [
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SSN",CTRL_UL_VALID,ids=lambda x: x if isinstance(x, str) else None)
 def test_control_uplink_valid(makePhysicalChannel, name, phy, MN, FN, TN, SSN):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Control_Uplink(phy_obj, MN, FN, TN, SSN)
+    burst = bursts.ControlUplink(phy_obj, MN, FN, TN, SSN)
 
-    sch_hu = makeLogicalChannel(lc.SCH_HU)  # must produce type5Blocks[0] length >= 168
-    out = burst.constructBurstBitSequence(sch_hu)
+    sch_hu = makeLogicalChannel(lc.SCH_HU)  # must produce type_5_blocks[0] length >= 168
+    out = burst.construct_burst_sequence(sch_hu)
 
-    assert len(out) == (burst.SNmax * 2) + burst.startGuardBitPeriod + burst.endGuardBitPeriod
+    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
     # quick structural anchors
-    d = burst.startGuardBitPeriod
+    d = burst.start_guard_bit_period
     assert np.array_equal(out[d:d+4], bursts.TAIL_BITS)
     assert np.array_equal(out[d+88:d+118], bursts.EXTENDED_TRAINING_SEQUENCE)
     assert np.array_equal(out[d+202:d+206], bursts.TAIL_BITS)
@@ -315,21 +316,21 @@ def test_control_uplink_valid(makePhysicalChannel, name, phy, MN, FN, TN, SSN):
 def test_control_uplink_invalid_init(makePhysicalChannel, name, phy, MN, FN, TN, SSN):
     phy_obj = makePhysicalChannel(phy)
     with pytest.raises(ValueError):
-        bursts.Control_Uplink(phy_obj, MN, FN, TN, SSN)
+        bursts.ControlUplink(phy_obj, MN, FN, TN, SSN)
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SSN",CTRL_UL_INVALID_BUILD,ids=lambda x: x if isinstance(x, str) else None)
 def test_control_uplink_invalid_build(makePhysicalChannel, name, phy, MN, FN, TN, SSN):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Control_Uplink(phy_obj, MN, FN, TN, SSN)
+    burst = bursts.ControlUplink(phy_obj, MN, FN, TN, SSN)
 
     if name == "ctrl_ul_wrong_logical_channel":
         sch_hd = makeLogicalChannel(lc.SCH_HD)
         with pytest.raises(ValueError):
-            burst.constructBurstBitSequence(sch_hd) #type: ignore
+            burst.construct_burst_sequence(sch_hd) #type: ignore
     else:
         sch_hu = makeLogicalChannel(lc.SCH_HU)
         with pytest.raises(ValueError):
-            burst.constructBurstBitSequence(sch_hu)
+            burst.construct_burst_sequence(sch_hu)
 
 ###################################################################################################
 
@@ -409,7 +410,7 @@ NORM_UL_INVALID_BUILD = [
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SSN,BKN1cls,BKN2cls",NORM_UL_VALID,ids=lambda x: x if isinstance(x, str) else None)
 def test_normal_uplink_valid(makePhysicalChannel, name, phy, MN, FN, TN, SSN, BKN1cls, BKN2cls):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Normal_Uplink_Burst(phy_obj, MN, FN, TN, SSN)
+    burst = bursts.NormalUplinkBurst(phy_obj, MN, FN, TN, SSN)
 
     bkn1 = makeLogicalChannel(BKN1cls)
     if BKN2cls is None:
@@ -417,10 +418,10 @@ def test_normal_uplink_valid(makePhysicalChannel, name, phy, MN, FN, TN, SSN, BK
     else:
         bkn2 = makeLogicalChannel(BKN2cls)
 
-    out = burst.constructBurstBitSequence(bkn1, bkn2, rampUpandDown=(True, True))
-    assert len(out) == (burst.SNmax * 2) + burst.startGuardBitPeriod + burst.endGuardBitPeriod
+    out = burst.construct_burst_sequence(bkn1, bkn2, ramp_up_down_state=(True, True))
+    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
 
-    d = burst.startGuardBitPeriod
+    d = burst.start_guard_bit_period
     assert np.array_equal(out[d:d+4], bursts.TAIL_BITS)
     assert np.array_equal(out[d+220:d+242], bursts.NORMAL_TRAINING_SEQUENCE[0]) or np.array_equal(out[d+220:d+242], bursts.NORMAL_TRAINING_SEQUENCE[1])
     assert np.array_equal(out[d+458:d+462], bursts.TAIL_BITS)
@@ -429,12 +430,12 @@ def test_normal_uplink_valid(makePhysicalChannel, name, phy, MN, FN, TN, SSN, BK
 def test_normal_uplink_invalid_init(makePhysicalChannel, name, phy, MN, FN, TN, SSN, BKN1cls, BKN2cls):
     phy_obj = makePhysicalChannel(phy)
     with pytest.raises(ValueError):
-        bursts.Normal_Uplink_Burst(phy_obj, MN, FN, TN, SSN)
+        bursts.NormalUplinkBurst(phy_obj, MN, FN, TN, SSN)
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SSN,BKN1cls,BKN2cls",NORM_UL_INVALID_BUILD,ids=lambda x: x if isinstance(x, str) else None)
 def test_normal_uplink_invalid_build(makePhysicalChannel, name, phy, MN, FN, TN, SSN, BKN1cls, BKN2cls):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Normal_Uplink_Burst(phy_obj, MN, FN, TN, SSN)
+    burst = bursts.NormalUplinkBurst(phy_obj, MN, FN, TN, SSN)
     
     bkn1 = makeLogicalChannel(BKN1cls)
     if BKN2cls is None:
@@ -443,7 +444,7 @@ def test_normal_uplink_invalid_build(makePhysicalChannel, name, phy, MN, FN, TN,
         bkn2 = makeLogicalChannel(BKN2cls)
 
     with pytest.raises(ValueError):
-        out = burst.constructBurstBitSequence(bkn1, bkn2, rampUpandDown=(True, True))
+        out = burst.construct_burst_sequence(bkn1, bkn2, ramp_up_down_state=(True, True))
 
 ###################################################################################################
 
@@ -499,31 +500,31 @@ LIN_UL_INVALID_BUILD = [
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SSN,LCcls",LIN_UL_VALID,ids=lambda x: x if isinstance(x, str) else None)
 def test_linearization_uplink_valid(makePhysicalChannel, name, phy, MN, FN, TN, SSN, LCcls):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Linearization_Uplink_Burst(phy_obj, MN, FN, TN, SSN)
+    burst = bursts.LinearizationUplinkBurst(phy_obj, MN, FN, TN, SSN)
 
     ch = makeLogicalChannel(LCcls)
-    out = burst.constructBurstBitSequence(ch)
+    out = burst.construct_burst_sequence(ch)
 
-    assert len(out) == (burst.SNmax * 2) + burst.startGuardBitPeriod + burst.endGuardBitPeriod
+    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
 
-    d = burst.startGuardBitPeriod
+    d = burst.start_guard_bit_period
     # payload region should be exactly the CLCH bits
-    assert np.array_equal(out[d:d+238], np.array(ch.type5Blocks[0][:238], dtype=np.uint8))
+    assert np.array_equal(out[d:d+206], np.array(ch.type_5_blocks[0][:206], dtype=np.uint8))
 
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SSN,LCcls",LIN_UL_INVALID_INIT,ids=lambda x: x if isinstance(x, str) else None)
 def test_linearization_uplink_invalid_init(makePhysicalChannel, name, phy, MN, FN, TN, SSN, LCcls):
     phy_obj = makePhysicalChannel(phy)
     with pytest.raises(ValueError):
-        bursts.Linearization_Uplink_Burst(phy_obj, MN, FN, TN, SSN)
+        bursts.LinearizationUplinkBurst(phy_obj, MN, FN, TN, SSN)
 
 
 @pytest.mark.parametrize("name,phy,MN,FN,TN,SSN,LCcls",LIN_UL_INVALID_BUILD,ids=lambda x: x if isinstance(x, str) else None)
 def test_linearization_uplink_invalid_build(makePhysicalChannel, name, phy, MN, FN, TN, SSN, LCcls):
     phy_obj = makePhysicalChannel(phy)
-    burst = bursts.Linearization_Uplink_Burst(phy_obj, MN, FN, TN, SSN)
+    burst = bursts.LinearizationUplinkBurst(phy_obj, MN, FN, TN, SSN)
 
     ch = makeLogicalChannel(LCcls)
 
     with pytest.raises(ValueError):
-        burst.constructBurstBitSequence(ch)
+        burst.construct_burst_sequence(ch)
