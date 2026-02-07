@@ -1,3 +1,7 @@
+"""
+coding_scrambling.py contains the CRC, interleaving, encoding, and scrambling methods and their respective inverses for
+converting type 1 bits into type 5 bits for logical channels.
+"""
 from math import gcd
 from collections import deque
 from numpy import zeros, full, uint32, argmin, uint8, array, arange, empty, broadcast_to, asarray, bitwise_or, \
@@ -5,15 +9,15 @@ from numpy import zeros, full, uint32, argmin, uint8, array, arange, empty, broa
 from numpy.typing import NDArray
 
 # MNC, MCC, and Colour code are chosen at random here to feed the seed for the scrambler
-MCC = [1,0,1,0,1,0,1,0,0,0] # order is MSB -> LSB
-MNC = [1,0,1,0,1,1,1,1,0,1,1,0,1,0] # order is MSB -> LSB
-COLOUR_CODE = [1,0,1,0,1,0] # order is MSB -> LSB
+MCC = [1, 0, 1, 0, 1, 0, 1, 0, 0, 0]                # order is MSB -> LSB
+MNC = [1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0]    # order is MSB -> LSB
+COLOUR_CODE = [1, 0, 1, 0, 1, 0]                    # order is MSB -> LSB
 
 N_BLOCK_BIT_LENGTH = 432
 N_BLOCK_BLOCK_INTERLEAVER_A_VALUE = 103
 INF = 10**9
 
-RM_30_14_GENERATOR =   array([0b100000000000001001101101100000,
+RM_30_14_GENERATOR = array([0b100000000000001001101101100000,
                             0b010000000000000010110111100000,
                             0b001000000000001111110000100000,
                             0b000100000000001110000000111100,
@@ -32,16 +36,15 @@ RM_30_14_GENERATOR =   array([0b100000000000001001101101100000,
 _RM_ENCODER_SHIFTS_30 = arange(29, -1, -1, dtype=uint32)
 _RM_DECODER_SHIFTS_14 = arange(13, -1, -1, dtype=uint32)
 
-
-
 # generator polynominal is ordered as Gn: [d0(current), d1, d2, d3, d4], for [G1, G2, G3, G4] overall
-RCPC_MOTHER_GENERATOR = array([[1,1,0,0,1], [1,0,1,1,1], [1,1,1,0,1], [1,1,0,1,1]], dtype=uint8)
+RCPC_MOTHER_GENERATOR = array([[1, 1, 0, 0, 1], [1, 0, 1, 1, 1], [1, 1, 1, 0, 1], [1, 1, 0, 1, 1]], dtype=uint8)
 RCPC_TAIL_LENGTH = 4
 RCPC_TRACEBACK_LENGTH = 40   # instead of performing full Viterbi traceback we just limit here to reasonable amount
 
-TETRA_32_SCRAMBLING_SEQUENCE = array([0,1,2,4,5,7,8,10,11,12,16,22,23,26,31], dtype=uint8)
+TETRA_32_SCRAMBLING_SEQUENCE = array([0, 1, 2, 4, 5, 7, 8, 10, 11, 12, 16, 22, 23, 26, 31], dtype=uint8)
 
 ###################################################################################################
+
 
 def _build_rm_codebook() -> NDArray[uint32]:
     """Initializes a codebook containing all possible 2^14 codewords for decoding (30,14) RM encoded data.
@@ -67,7 +70,7 @@ def _build_rm_codebook() -> NDArray[uint32]:
     codeword = uint32(0)
     codebook[prev_g] = codeword
 
-    for i in range(1, 2**14): # type: ignore[assignment]
+    for i in range(1, 2**14):  # type: ignore[assignment]
         g = int(gray_binary_values[i])
         # because the RM(30,14) encoding is linear, can rapidly calculate next codeword if we know the difference
         # between the previous input_data and the current word
@@ -82,20 +85,22 @@ def _build_rm_codebook() -> NDArray[uint32]:
 
     return codebook
 
+
 RM_30_14_CODEBOOK = _build_rm_codebook()
 
 ###################################################################################################
 
-def _build_rcpc_transition_table() -> dict[int,list[tuple[int,int,list[int]]]]:
-    """Builds a RCPC convolution state transition table dict for Viterbi decoding. The dictionary is in the form of a 
+
+def _build_rcpc_transition_table() -> dict[int, list[tuple[int, int, list[int]]]]:
+    """Builds a RCPC convolution state transition table dict for Viterbi decoding. The dictionary is in the form of a
     16-key dictionary of destination states with values for origin RCPC stage, input bit and, list of 4 output bits
 
     Returns:
-        dict[int,list[tuple[int,int,list[int]]]]: keys of dest. RCPC states, with values of 
+        dict[int,list[tuple[int,int,list[int]]]]: keys of dest. RCPC states, with values of
         [origin RCPC state, input bit, four output bits[1,2,3,4]]
     """
     temp_table: dict
-    temp_table = {i: [] for i in range(16)} # each key is one of the 16 states,
+    temp_table = {i: [] for i in range(16)}  # each key is one of the 16 states,
 
     states = [[(i >> 3) & 0b1, (i >> 2) & 0b1, (i >> 1) & 0b1, i & 0b1] for i in range(16)]
 
@@ -105,7 +110,7 @@ def _build_rcpc_transition_table() -> dict[int,list[tuple[int,int,list[int]]]]:
         for input_bit in [0, 1]:
             input_data = [input_bit] + state_bits
             # add input_data to shift register, i.e. the state, for easy XOR'ing with generator polynominal
-            output_bits = [0, 0, 0, 0] # order c1, c2, c3, c4
+            output_bits = [0, 0, 0, 0]  # order c1, c2, c3, c4
             for i in range(4):
                 # for i e [0,4] calculate the c value, recall for every 1 bit input_data we output 5 bits
                 c = 0
@@ -128,12 +133,14 @@ def _build_rcpc_transition_table() -> dict[int,list[tuple[int,int,list[int]]]]:
 
     return temp_table
 
+
 RCPC_TRANSITION_TABLE = _build_rcpc_transition_table()
 
 ###################################################################################################
 # CRC-16 / Block Encoding (type 1 - to - type 2 bits)
 
-def crc16_encoder(input_data:NDArray[uint8]) -> NDArray[uint8]:
+
+def crc16_encoder(input_data: NDArray[uint8]) -> NDArray[uint8]:
     """Encodes K # of input_data bits into (K+16) # of output bits in the form [K-Data Bits | 16-CRC bits]
 
     Args:
@@ -170,7 +177,8 @@ def crc16_encoder(input_data:NDArray[uint8]) -> NDArray[uint8]:
 
 ###################################################################################################
 
-def crc16_decoder(input_data:NDArray[uint8]) -> tuple[NDArray[uint8], bool]:
+
+def crc16_decoder(input_data: NDArray[uint8]) -> tuple[NDArray[uint8], bool]:
     """Decodes K # of input_data bits from (K+16) # of input_data bits in the form [K-Data Bits | 16-CRC bits]
     and determines if the rx input_data data CRC matches the calculated crc from the rx payload data
 
@@ -213,7 +221,8 @@ def crc16_decoder(input_data:NDArray[uint8]) -> tuple[NDArray[uint8], bool]:
 
     return decoded_bits, crc_valid
 
-def rm3014_encoder(input_data:NDArray[uint8]) -> NDArray[uint8]:
+
+def rm3014_encoder(input_data: NDArray[uint8]) -> NDArray[uint8]:
     """Encodes 14 input_data bits into 30 shorted (30,14) Reed Muller encoded output bits
 
     Args:
@@ -236,8 +245,7 @@ def rm3014_encoder(input_data:NDArray[uint8]) -> NDArray[uint8]:
     return ((codeword_output >> _RM_ENCODER_SHIFTS_30) & 1).astype(uint8)
 
 
-
-def rm3014_decoder(input_data:NDArray[uint8]) -> NDArray[uint8]:
+def rm3014_decoder(input_data: NDArray[uint8]) -> NDArray[uint8]:
     """Decodes 30 (30,14) Reed Muller encoded input_data bits into 14 output bits,
     performing hard minimum distance decoding using an LUT codebook.
 
@@ -252,24 +260,24 @@ def rm3014_decoder(input_data:NDArray[uint8]) -> NDArray[uint8]:
     # convolutional encoding and only being 14 bits, it's more sure-fire to just use hard table decoding
     # instead of attempting syndrome decoding of some sort, tba perhaps
 
-    #1. Convert input_data bit array into a 30 bit binary int value
+    # 1. Convert input_data bit array into a 30 bit binary int value
     # convert to uint32
     input_uint32 = (asarray(input_data, dtype=uint8).reshape(30) & 1).astype(uint32)
-    #convert into single value using or's, using the precalculate shift vector to align MSB->LSB
+    # convert into single value using or's, using the precalculate shift vector to align MSB->LSB
     input_word = bitwise_or.reduce(input_uint32 << _RM_ENCODER_SHIFTS_30, dtype=uint32, initial=uint32(0))
 
-    #2. Evaluate over the generated codebook, calculating hamming distance to determine optimal input_data word
+    # 2. Evaluate over the generated codebook, calculating hamming distance to determine optimal input_data word
 
     # evaluate the comparisons, if the word exists then we have 1 true result
     code_comparisions = flatnonzero(RM_30_14_CODEBOOK == input_word)
 
     if code_comparisions.size:
-        closest_word = int(code_comparisions [0])
+        closest_word = int(code_comparisions[0])
     else:
         # compute hamming distances instead over entire codebook
         x = RM_30_14_CODEBOOK ^ input_word
         d = bitwise_count(x).astype(uint8)
-        closest_word = int(argmin(d)) # select closest code work as most likely
+        closest_word = int(argmin(d))  # select closest code work as most likely
 
     # convert 32 bit codeword into bit array, by shifting and masking with, convert to uint8
     decoded_bits = ((uint32(closest_word) >> _RM_DECODER_SHIFTS_14) & 1).astype(uint8)
@@ -280,9 +288,9 @@ def rm3014_decoder(input_data:NDArray[uint8]) -> NDArray[uint8]:
 ###################################################################################################
 # Convolutional encoding/decoding (type 2 - to - type 3 bits)
 
-def _fetch_rcpc_parameters(k2:int, k3:int) -> tuple[list[int],int,int]:
+def _fetch_rcpc_parameters(k2: int, k3: int) -> tuple[list[int], int, int]:
     """Returns the corresponding puncturing vector, t-value, and division ratio for a given TETRA RCPC (K2,K3) ratio
-    
+
     Args:
         k2 (int): input_data rate ratio numerator
         k3 (int): output rate ratio denominator
@@ -293,25 +301,27 @@ def _fetch_rcpc_parameters(k2:int, k3:int) -> tuple[list[int],int,int]:
     punc_vector = []
     t = 0
     div_ratio = 0
-    match (k2,k3):
-        case(2,3):
+    match (k2, k3):
+        case(2, 3):
             punc_vector = [0, 1, 4]
             t = 3
-        case(1,3):
+        case(1, 3):
             punc_vector = [0, 1, 2, 4, 5, 6]
             t = 6
-        case(292,432):
+        case(292, 432):
             punc_vector = [0, 1, 4]
             t = 3
             div_ratio = 65
-        case(148,432):
+        case(148, 432):
             punc_vector = [0, 1, 2, 4, 5, 6]
             t = 6
             div_ratio = 35
-
+        case _:
+            raise RuntimeError(f"Passed k2, k3 pair value of: ({k2},{k3}) invalid")
     return punc_vector, t, div_ratio
 
-def rcpc_encoder(input_data:NDArray[uint8], k2:int, k3:int) -> NDArray[uint8]:
+
+def rcpc_encoder(input_data: NDArray[uint8], k2: int, k3: int) -> NDArray[uint8]:
     """Performs 16-state rate-compatible punctured convoltion (RCPC) encoding of rate (K2/K3) on the input_data data
 
     Args:
@@ -338,7 +348,7 @@ def rcpc_encoder(input_data:NDArray[uint8], k2:int, k3:int) -> NDArray[uint8]:
     for bit in input_data:
         # add input_data to shift register for easy XOR'ing with generator polynominal
         input_temp = [bit] + list(shift_register)
-        nibble_temp  = [0, 0, 0, 0] # order c1, c2, c3, c4
+        nibble_temp = [0, 0, 0, 0]  # order c1, c2, c3, c4
         for i in range(4):
             # for i e [0,4] calculate the c value, recall for every 1 bit input_data we output 5 bits
             c = 0
@@ -355,7 +365,7 @@ def rcpc_encoder(input_data:NDArray[uint8], k2:int, k3:int) -> NDArray[uint8]:
     # Step 2: puncturing of the mother code to obtain a 16-state RCPC code fo rate K2/K3
     #         with possible rates of: 2/3, 1/3, 292/432, 148/432
 
-    punc_vector, t, div_ratio = _fetch_rcpc_parameters(k2,k3)
+    punc_vector, t, div_ratio = _fetch_rcpc_parameters(k2, k3)
     punctured_data = []
 
     num_output_bits = (len(input_data) * k3) // k2
@@ -371,8 +381,8 @@ def rcpc_encoder(input_data:NDArray[uint8], k2:int, k3:int) -> NDArray[uint8]:
     return array(punctured_data, dtype=uint8)
 
 
-def rcpc_decoder(input_data:NDArray[uint8], payload_length:int, k2:int, k3:int) -> NDArray[uint8]:
-    """Performs Viterbi decoding of 16-state RCPC convolutional encoded data of rate (K2/K3) 
+def rcpc_decoder(input_data: NDArray[uint8], payload_length: int, k2: int, k3: int) -> NDArray[uint8]:
+    """Performs Viterbi decoding of 16-state RCPC convolutional encoded data of rate (K2/K3)
     into decoded bits into an array of 'payloadLength' length
 
     Args:
@@ -389,7 +399,7 @@ def rcpc_decoder(input_data:NDArray[uint8], payload_length:int, k2:int, k3:int) 
 
     decoded_bits = []
     # Determine the t, divRatio, and puncturing index values based on K2,K3
-    punc_vector, t, div_ratio = _fetch_rcpc_parameters(k2,k3)
+    punc_vector, t, div_ratio = _fetch_rcpc_parameters(k2, k3)
 
     # This Viterbi decoder uses 1 data bit = 1 Viterbi transition basis
     # This results in some complication because, due to fractional puncturing,
@@ -459,13 +469,13 @@ def rcpc_decoder(input_data:NDArray[uint8], payload_length:int, k2:int, k3:int) 
                 if metric < most_likely_metric:
                     most_likely_metric = metric
                     most_likely_origin_state = origin_state
-                    most_likely_input_bit  = input_bit
+                    most_likely_input_bit = input_bit
 
             # Find most likely path to current state considered
             new_path_metric[dest_state] = most_likely_metric
-            if most_likely_origin_state >=0 and most_likely_metric < INF:
+            if most_likely_origin_state >= 0 and most_likely_metric < INF:
                 new_survivor_bits[dest_state] = deque(survivor_bits[most_likely_origin_state],
-                                                       maxlen=RCPC_TRACEBACK_LENGTH)
+                                                      maxlen=RCPC_TRACEBACK_LENGTH)
                 new_survivor_bits[dest_state].append(most_likely_input_bit)
 
         # update overall pathMetric and the survivor bit streams
@@ -486,13 +496,13 @@ def rcpc_decoder(input_data:NDArray[uint8], payload_length:int, k2:int, k3:int) 
     remaining = list(survivor_bits[final_state])
     decoded_bits.extend(remaining)
 
-
     return array(decoded_bits, dtype=uint8)
 
 ###################################################################################################
 # Interleaving/deinterleaving (type 3 - to - type 4 bits)
 
-def block_interleaver(input_data:NDArray[uint8], a:int) -> NDArray[uint8]:
+
+def block_interleaver(input_data: NDArray[uint8], a: int) -> NDArray[uint8]:
     """Performs (K,a) block interleaving of K input_data data into K output data
 
     Args:
@@ -511,7 +521,8 @@ def block_interleaver(input_data:NDArray[uint8], a:int) -> NDArray[uint8]:
 
     return interleaved_data
 
-def block_deinterleaver(input_data:NDArray[uint8], a:int) -> NDArray[uint8]:
+
+def block_deinterleaver(input_data: NDArray[uint8], a: int) -> NDArray[uint8]:
     """Performs (K,a) block deinterleaving of K input_data data into K output data
 
     Args:
@@ -529,10 +540,11 @@ def block_deinterleaver(input_data:NDArray[uint8], a:int) -> NDArray[uint8]:
 
     return deinterleaved_data
 
-def _diagonal_mapping(n:int):
+
+def _diagonal_mapping(n: int):
     if n not in [1, 4, 8]:
         raise ValueError(f"Invalid {n}, expected value in [1, 4, 8]")
-    w = N_BLOCK_BIT_LENGTH // n # blockwidth
+    w = N_BLOCK_BIT_LENGTH // n  # blockwidth
 
     k = arange(N_BLOCK_BIT_LENGTH, dtype=int32)
     j = k // w
@@ -541,24 +553,25 @@ def _diagonal_mapping(n:int):
     src_index = j + (i * n)
     return j, src_index
 
-def _block_perm(k_len: int, a: int, interleave:bool=True):
+
+def _block_perm(k_len: int, a: int, interleave: bool = True):
     if gcd(a, k_len) != 1:
-        raise ValueError (f"{k_len} and {a} does not have a greatest common divisor of 1"
-                          f", therefore cannot perform (K,a) deinterleaving")
+        raise ValueError(f"{k_len} and {a} does not have a greatest common divisor of 1"
+                         f", therefore cannot perform (K,a) deinterleaving")
 
     i = arange(k_len, dtype=int32)
     if not interleave:
         p = (a * i) % k_len
-        p_inv = None # don't bother finding
+        p_inv = None  # don't bother finding
     else:
         p = None
         a_inv = pow(a, -1, k_len)
         p_inv = (a_inv * i) % k_len
 
-
     return p, p_inv
 
-def n_block_interleaver(input_data_blocks:NDArray[uint8], n:int) -> NDArray[uint8]:
+
+def n_block_interleaver(input_data_blocks: NDArray[uint8], n: int) -> NDArray[uint8]:
     """Performs n block interleaving of m # of input_data data blocks into (m+n-1) # of output data blocks
 
     Args:
@@ -570,17 +583,16 @@ def n_block_interleaver(input_data_blocks:NDArray[uint8], n:int) -> NDArray[uint
     """
     # n may be 1, 4, or 8, interleaving m # of 432 bit long blocks over n blocks into a sequence of (m + n - 1) blocks
 
-
     if input_data_blocks.ndim != 2 or input_data_blocks.shape[1] != N_BLOCK_BIT_LENGTH:
         raise ValueError(f"Expected shape of (m, {N_BLOCK_BIT_LENGTH}, got {input_data_blocks.shape}")
 
     m = input_data_blocks.shape[0]
-    l = m + n - 1 # Number of output blocks
+    l_len = m + n - 1  # Number of output blocks
 
     # Step 1, diagonal interleave m blocks in (m+n-1) blocks, each with 432 bits in them
     j_of_k, src_index = _diagonal_mapping(n)
-    m_array = arange(l, dtype=int32)[:, None] #(l, 1)
-    src_block = m_array - j_of_k[None, :] #(l, 432)
+    m_array = arange(l_len, dtype=int32)[:, None]   # (l, 1)
+    src_block = m_array - j_of_k[None, :]       # (l, 432)
 
     # valid positions to prevent out of bounds indexing, instead we leave those bits as zero from the init
     valid = (src_block >= 0) & (src_block < m)
@@ -589,7 +601,7 @@ def n_block_interleaver(input_data_blocks:NDArray[uint8], n:int) -> NDArray[uint
 
     temp = input_data_blocks[src_block_clip, src_index[None, :]]
     temp = temp.astype(uint8, copy=False)
-    temp[~valid] = 0 # set unaccessed bits to zero
+    temp[~valid] = 0  # set unaccessed bits to zero
 
     # Step 2, block interleave
     _, p_inv = _block_perm(N_BLOCK_BIT_LENGTH, N_BLOCK_BLOCK_INTERLEAVER_A_VALUE, True)
@@ -597,7 +609,8 @@ def n_block_interleaver(input_data_blocks:NDArray[uint8], n:int) -> NDArray[uint
 
     return interleaved_data_blocks
 
-def n_block_deinterleaver(input_data_blocks:NDArray[uint8], m:int, n:int) -> NDArray[uint8]:
+
+def n_block_deinterleaver(input_data_blocks: NDArray[uint8], m: int, n: int) -> NDArray[uint8]:
     """Performs n block deinterleaving of (m+n-1) # of input_data data blocks into  # of output data blocks
 
     Args:
@@ -611,10 +624,10 @@ def n_block_deinterleaver(input_data_blocks:NDArray[uint8], m:int, n:int) -> NDA
     if input_data_blocks.ndim != 2 or input_data_blocks.shape[1] != N_BLOCK_BIT_LENGTH:
         raise ValueError(f"Expected shape of (m, {N_BLOCK_BIT_LENGTH}, got {input_data_blocks.shape}")
 
-    l = input_data_blocks.shape[0]
+    l_len = input_data_blocks.shape[0]
 
-    if l != (m + n -1):
-        raise ValueError(f"Expected {m+n-1} blocks, got {l}")
+    if l_len != (m + n - 1):
+        raise ValueError(f"Expected {m+n-1} blocks, got {l_len}")
 
     # Step 1, block deinterleave
     p, _ = _block_perm(N_BLOCK_BIT_LENGTH, N_BLOCK_BLOCK_INTERLEAVER_A_VALUE, False)
@@ -622,13 +635,13 @@ def n_block_deinterleaver(input_data_blocks:NDArray[uint8], m:int, n:int) -> NDA
 
     # Step 2, reverse diagonal interleaving of m blocks
     j_of_k, src_index = _diagonal_mapping(n)
-    m_array = arange(l, dtype=int32)[:, None] #(l,1)
-    dest_block = m_array - j_of_k[None, :]         #(l,432)
+    m_array = arange(l_len, dtype=int32)[:, None]      # (l,1)
+    dest_block = m_array - j_of_k[None, :]         # (l,432)
     valid = (dest_block >= 0) & (dest_block < m)
 
     dest_block_clip = clip(dest_block, 0, m-1)
     deinterleaved_data_blocks = zeros((m, N_BLOCK_BIT_LENGTH), dtype=uint8)
-    columns = broadcast_to(src_index[None, :], (l, N_BLOCK_BIT_LENGTH))
+    columns = broadcast_to(src_index[None, :], (l_len, N_BLOCK_BIT_LENGTH))
 
     # only assigned valid positions
     deinterleaved_data_blocks[dest_block_clip[valid], columns[valid]] = temp[valid]
@@ -638,12 +651,13 @@ def n_block_deinterleaver(input_data_blocks:NDArray[uint8], m:int, n:int) -> NDA
 ###################################################################################################
 # Scrambling/descrambling (type 4 - to - type 5 bits)
 
-def scrambler(input_data: NDArray[uint8], bsch_state:bool=False) -> NDArray[uint8]:
+
+def scrambler(input_data: NDArray[uint8], bsch_state: bool = False) -> NDArray[uint8]:
     """Performs scrambling of input_data data using a predefined scrambling polynominal
 
     Args:
         input_data (NDArray[uint8]): input binary values stored in uint8 bytes array to be scrambled
-        bsch_state (bool, optional): Defaults to False, if the logical channel 
+        bsch_state (bool, optional): Defaults to False, if the logical channel
         is BSCH, should set to True to set scramlber init to 0's
 
     Returns:
@@ -654,14 +668,14 @@ def scrambler(input_data: NDArray[uint8], bsch_state:bool=False) -> NDArray[uint
     scrambler_init_code = []
 
     if not bsch_state:
-        scrambler_init_code = [1,1] + MCC + MNC + COLOUR_CODE
+        scrambler_init_code = [1, 1] + MCC + MNC + COLOUR_CODE
     else:
         # for BSCH with scramble with zeros
-        scrambler_init_code = [1,1] + [0]*30
+        scrambler_init_code = [1, 1] + [0]*30
 
     shift_register = deque(scrambler_init_code, maxlen=32)
     for i in range(n):
-        p_k = uint8(shift_register[31]) # oldest data
+        p_k = uint8(shift_register[31])  # oldest data
 
         scrambled_data[i] = input_data[i] ^ p_k
 
@@ -674,12 +688,13 @@ def scrambler(input_data: NDArray[uint8], bsch_state:bool=False) -> NDArray[uint
 
     return scrambled_data
 
-def descrambler(input_data: NDArray[uint8], bsch_state:bool=False) -> NDArray[uint8]:
+
+def descrambler(input_data: NDArray[uint8], bsch_state: bool = False) -> NDArray[uint8]:
     """_summary_
 
     Args:
         input_data (NDArray[uint8]): input binary values stored in uint8 bytes array to be descrambled
-        bsch_state (bool, optional): Defaults to False, if the logical channel 
+        bsch_state (bool, optional): Defaults to False, if the logical channel
         is BSCH, should set to True to set scramlber init to 0's
 
     Returns:

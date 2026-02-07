@@ -1,5 +1,8 @@
 # pylint: skip-file
+# flake8: noqa
+# type: ignore
 import sys
+from numpy import array, int64
 import pytest
 from pathlib import Path
 module_path = Path(__file__).resolve().parent.parent
@@ -528,3 +531,9 @@ def test_linearization_uplink_invalid_build(makePhysicalChannel, name, phy, MN, 
 
     with pytest.raises(ValueError):
         burst.construct_burst_sequence(ch)
+
+
+TX_HALFBAND1_Q17_COEFFICIENTS = array(
+    [-145, 0, 193, 0, -323, 0, 555, 0, -914, 0, 1434, 0, -2170, 0, 3221, 0, -4805, 0,
+     7491, 0, -13392, 0, 41587, 65606, 41587, 0, -13392, 0, 7491, 0, -4805, 0, 3221, 0,
+     -2170, 0, 1434, 0, -914, 0, 555, 0, -323, 0, 193, 0, -145], dtype=int64)

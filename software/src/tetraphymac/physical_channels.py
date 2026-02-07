@@ -6,6 +6,7 @@ from typing import ClassVar, Protocol
 from dataclasses import dataclass
 
 from numpy import uint8, array, empty, zeros
+from numpy.typing import NDArray
 
 from .constants import PhyType, LinkDirection, BurstContent, ChannelKind, ChannelName
 from .logical_channels import BLCH, BNCH, BSCH, CLCH, SCH_HD, SCH_F, SCH_HU, AACH, LogicalChannelVD, \
@@ -21,30 +22,31 @@ TIMESLOT_BIT_LENGTH = 510           # How many modulation bits in a timeslot
 TIMESLOT_SUBSLOT_LENGTH = 2         # How many subslots in a timeslot
 
 # Per EN 300 392-2 V2.4.2 - 9.4.4.3.1
-FREQUENCY_CORRECTION_FIELD = array([1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-                              0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-                              0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-                              1,1,1,1,1,1,1,1],dtype=uint8)
+FREQUENCY_CORRECTION_FIELD = array([1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                    1, 1, 1, 1, 1, 1, 1, 1], dtype=uint8)
 
 # Per EN 300 392-2 V2.4.2 - 9.4.4.3.2
-NORMAL_TRAINING_SEQUENCE = array([[1,1,0,1,0,0,0,0,1,1,1,0,1,0,0,1,1,1,0,1,0,0],
-                                    [0,1,1,1,1,0,1,0,0,1,0,0,0,0,1,1,0,1,1,1,1,0],
-                                    [1,0,1,1,0,1,1,1,0,0,0,0,0,1,1,0,1,0,1,1,0,1]],dtype=uint8)
+NORMAL_TRAINING_SEQUENCE = array([[1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0],
+                                  [0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0],
+                                  [1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1]], dtype=uint8)
 
 # Per EN 300 392-2 V2.4.2 - 9.4.4.3.3
 EXTENDED_TRAINING_SEQUENCE = array(
-    [1,0,0,1,1,1,0,1,0,0,0,0,1,1,1,0,1,0,0,1,1,1,0,1,0,0,0,0,1,1],dtype=uint8)
+    [1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1], dtype=uint8)
 
 # Per EN 300 392-2 V2.4.2 - 9.4.4.3.4
 SYNCHRONIZATION_TRAINING_SEQUENCE = array(
-    [1,1,0,0,0,0,0,1,1,0,0,1,1,1,0,0,1,1,1,0,1,0,0,1,1,1,0,0,0,0,0,1,1,0,0,1,1,1],dtype=uint8)
+    [1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0,
+     0, 0, 0, 1, 1, 0, 0, 1, 1, 1], dtype=uint8)
 
 # Per EN 300 392-2 V2.4.2 - 9.4.4.3.5
-TAIL_BITS = array([1, 1, 0, 0],dtype=uint8)
+TAIL_BITS = array([1, 1, 0, 0], dtype=uint8)
 
 # Per EN 300 392-2 V2.4.2 - 9.4.4.3.6
-PHASE_ADJUSTMENT_SYMBOL_RANGE = {"a":(7,121), "b":(122,248), "c":(7,107), "d":(108,248), "e":(111,229),
-                             "f":(0,110), "g":(2,116), "h":(117,243), "i":(2,102), "j":(103,243)}
+PHASE_ADJUSTMENT_SYMBOL_RANGE = {"a": (7, 121), "b": (122, 248), "c": (7, 107), "d": (108, 248), "e": (111, 229),
+                                 "f": (0, 110), "g": (2, 116), "h": (117, 243), "i": (2, 102), "j": (103, 243)}
 
 
 ###################################################################################################
@@ -57,32 +59,33 @@ class PhysicalChannel():
     channel_type: PhyType        # The type of physical channel (CP,TP,UP)
 ###################################################################################################
 
+
 class Burst():
     # require class-level "spec constants"
     sn_max: ClassVar[int]                   # Max number of modulation symbols in burst
     start_guard_bit_period: ClassVar[int]     # The initial guard period / delay in bits (default)
     end_guard_bit_period: ClassVar[int]       # The end guard period in bits (default)
-    subslot_width: ClassVar[int]            # How many subslots does the burst take up: 1 or 2
-    link_direction: ClassVar[LinkDirection] # either DL or UL
+    subslot_width: ClassVar[int]                # How many subslots does the burst take up: 1 or 2
+    link_direction: ClassVar[LinkDirection]     # either DL or UL
 
     # Permissible physical channel types for the burst class
     ALLOWED_PHY: ClassVar[set[PhyType]]
 
     # per instance runtime variables
-    burst_type: BurstContent      # either traffic, control, or mixed
-    phy_channel: PhyType          # The physical RF channel type (CP,TP,UP) that the burst utilizes
-    mixed_burst:bool              # if the burst has 1 or more blocks/subslots stolen for control
-                                 # or is just a composite burst made of two seperate logical channels
-    multiframe_number: int        # The multi-frame number of the burst
-    frame_number: int             # The frame number of the burst
-    timeslot: int                # The TDMA time slot number of the burst
-    subslot: int                 # The subslot which the burst starts in and occupies atleast
+    burst_type: BurstContent        # either traffic, control, or mixed
+    phy_channel: PhyType            # The physical RF channel type (CP,TP,UP) that the burst utilizes
+    mixed_burst: bool               # if the burst has 1 or more blocks/subslots stolen for control or a composite burst
+    multiframe_number: int          # The multi-frame number of the burst
+    frame_number: int               # The frame number of the burst
+    timeslot: int                   # The TDMA time slot number of the burst
+    subslot: int                    # The subslot which the burst starts in and occupies atleast
 
     # Variable versions of start/end_guard_bit_period
     # that allow for dynamic ramping based on if we have continuous data
     start_ramp_period: int
     end_ramp_period: int
-    def __init__(self, phy_channel: PhysicalChannel, mn:int, fn:int, tn:int, ssn:int=1):
+
+    def __init__(self, phy_channel: PhysicalChannel, mn: int, fn: int, tn: int, ssn: int = 1):
         self._validate_class_constants()
         # store runtime state
         self.phy_channel = phy_channel.channel_type
@@ -99,12 +102,12 @@ class Burst():
 
         self._validate_common()
 
-    def _validate_common(self):
+    def _validate_common(self) -> None:
         # TN range checks
         if not 1 <= self.timeslot <= TDMAFRAME_TIMESLOT_LENGTH:
             raise ValueError(f"TN {self.timeslot} invalid for {type(self).__name__}")
         # FN range checks
-        if not 1<= self.frame_number <= MULTIFRAME_TDMAFRAME_LENGTH:
+        if not 1 <= self.frame_number <= MULTIFRAME_TDMAFRAME_LENGTH:
             raise ValueError(f"FN {self.frame_number} invalid for {type(self).__name__}")
         # MN range checks
         if not 1 <= self.multiframe_number <= HYPERFRAME_MULTIFRAME_LENGTH:
@@ -113,17 +116,18 @@ class Burst():
         if not 1 <= self.subslot <= TIMESLOT_SUBSLOT_LENGTH:
             raise ValueError(f"SSN {self.subslot} invalid for {type(self).__name__}")
         # Physical channel type allowed
-        if self.ALLOWED_PHY is not None and self.phy_channel not in self.ALLOWED_PHY:
+        if self.phy_channel not in self.ALLOWED_PHY:
             raise ValueError(f"Phy {self.phy_channel} invalid for {type(self).__name__}")
 
-    def _validate_class_constants(self):
-        required_vars = ["sn_max","start_guard_bit_period", "end_guard_bit_period",
-                             "subslot_width","link_direction", "ALLOWED_PHY"]
+    def _validate_class_constants(self) -> None:
+        required_vars = ["sn_max", "start_guard_bit_period", "end_guard_bit_period",
+                         "subslot_width", "link_direction", "ALLOWED_PHY"]
         for name in required_vars:
             if not hasattr(type(self), name):
                 raise TypeError(f"{type(self).__name__} missing class constant {name}")
 
 ###################################################################################################
+
 
 class ControlUplink(Burst):
     sn_max = 103
@@ -135,7 +139,7 @@ class ControlUplink(Burst):
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL}
 
-    def construct_burst_sequence(self, input_logical_ch_ssn1:SCH_HU):
+    def construct_burst_sequence(self, input_logical_ch_ssn1: SCH_HU) -> NDArray[uint8]:
         # Must verify specific non-common TN/FN based on physical channel
         if self.phy_channel == PhyType.CONTROL_CHANNEL:
             if not 1 <= self.frame_number <= MULTIFRAME_TDMAFRAME_LENGTH:
@@ -152,20 +156,24 @@ class ControlUplink(Burst):
         # Build the burst
         d = self.start_guard_bit_period
         burst_bit_seq = empty(shape=(self.sn_max*2)+d+self.end_guard_bit_period, dtype=uint8)
-        burst_bit_seq[:d] = zeros(shape=self.start_guard_bit_period, dtype=uint8) # guard period
+        burst_bit_seq[:d] = zeros(shape=self.start_guard_bit_period, dtype=uint8)   # guard period
         burst_bit_seq[d:4+d] = TAIL_BITS
         burst_bit_seq[d+4:88+d] = input_logical_ch_ssn1.type_5_blocks[0][:84]
         burst_bit_seq[d+88:118+d] = EXTENDED_TRAINING_SEQUENCE
         burst_bit_seq[d+118:202+d] = input_logical_ch_ssn1.type_5_blocks[0][84:168]
         burst_bit_seq[d+202:206+d] = TAIL_BITS
-        burst_bit_seq[206+d:255] = zeros(shape=self.end_guard_bit_period, dtype=uint8) # guard period
+        burst_bit_seq[206+d:255] = zeros(shape=self.end_guard_bit_period, dtype=uint8)  # guard period
         return burst_bit_seq
-    def deconstuct_burst_sequence(self):
+
+    def deconstuct_burst_sequence(self) -> None:
+
         raise NotImplementedError
 
 ###################################################################################################
 
+
 class NormalUplinkBurst(Burst):
+
     sn_max = 231
     start_guard_bit_period = 34
     end_guard_bit_period = 14
@@ -175,26 +183,25 @@ class NormalUplinkBurst(Burst):
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL}
 
-    def construct_burst_sequence(self, input_logical_ch_bkn1:TrafficChannel | SCH_F | STCH,
-                                    input_logical_ch_bkn2:TrafficChannel | STCH | None =None,
-                                    ramp_up_down_state:tuple[bool,bool]=(True,True)):
+    def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH,
+                                 input_logical_ch_bkn2: TrafficChannel | STCH | None = None,
+                                 ramp_up_down_state: tuple[bool, bool] = (True, True)) -> NDArray[uint8]:
 
         bkn1 = input_logical_ch_bkn1.channel_type
         bkn2 = None if input_logical_ch_bkn2 is None else input_logical_ch_bkn2.channel_type
         if input_logical_ch_bkn1.channel not in (ChannelName.TCH_2_4_CHANNEL, ChannelName.TCH_4_8_CHANNEL,
-                                                    ChannelName.TCH_7_2_CHANNEL, ChannelName.TCH_S_CHANNEL,
-                                                    ChannelName.SCH_F_CHANNEL, ChannelName.STCH_CHANNEL):
-            raise ValueError (f"For {type(self).__name__}, phy {self.phy_channel}"
-                              f" invalid bkn1:{input_logical_ch_bkn1.channel}")
+                                                 ChannelName.TCH_7_2_CHANNEL, ChannelName.TCH_S_CHANNEL,
+                                                 ChannelName.SCH_F_CHANNEL, ChannelName.STCH_CHANNEL):
+            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+                             f" invalid bkn1:{input_logical_ch_bkn1.channel}")
         if (input_logical_ch_bkn2 is not None
             and input_logical_ch_bkn2.channel not in (ChannelName.TCH_2_4_CHANNEL, ChannelName.TCH_4_8_CHANNEL,
-                                                        ChannelName.TCH_7_2_CHANNEL, ChannelName.TCH_S_CHANNEL,
-                                                        ChannelName.STCH_CHANNEL)):
+                                                      ChannelName.TCH_7_2_CHANNEL, ChannelName.TCH_S_CHANNEL,
+                                                      ChannelName.STCH_CHANNEL)):
 
-            raise ValueError (f"For {type(self).__name__}, phy {self.phy_channel}"
-                              f" invalid bkn2:{input_logical_ch_bkn2.channel}")
-        training_seq_index = 0 # Depending on composition of burst, we use a different training sequence
-                                  # either 1 or 2 per Table 25
+            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+                             f" invalid bkn2:{input_logical_ch_bkn2.channel}")
+        training_seq_index = 0  # Depending on composition of burst, we use a different training sequence either 1 or 2
 
         match (bkn1, bkn2):
             case (ChannelKind.TRAFFIC_TYPE, None):
@@ -205,7 +212,7 @@ class NormalUplinkBurst(Burst):
                 if self.phy_channel != PhyType.TRAFFIC_CHANNEL:
                     raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                      f" invalid for bkn1:{bkn1} bkn2:{bkn2} (expected TP)")
-                if not 1<= self.frame_number < MULTIFRAME_TDMAFRAME_LENGTH:
+                if not 1 <= self.frame_number < MULTIFRAME_TDMAFRAME_LENGTH:
                     raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                      f", FN {self.frame_number} invalid for bkn1:{bkn1} bkn2:{bkn2}")
 
@@ -215,7 +222,7 @@ class NormalUplinkBurst(Burst):
                 self.burst_type = BurstContent.BURST_CONTROL_TYPE
                 training_seq_index = 0
                 if self.phy_channel == PhyType.CONTROL_CHANNEL:
-                    if not 1<= self.frame_number <= MULTIFRAME_TDMAFRAME_LENGTH:
+                    if not 1 <= self.frame_number <= MULTIFRAME_TDMAFRAME_LENGTH:
                         raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                          f", FN {self.frame_number} invalid for bkn1:{bkn1} bkn2:{bkn2}")
                 elif self.phy_channel == PhyType.TRAFFIC_CHANNEL:
@@ -223,8 +230,8 @@ class NormalUplinkBurst(Burst):
                         raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                          f", FN {self.frame_number} invalid for bkn1:{bkn1} bkn2:{bkn2}")
                 else:
-                    raise ValueError (f"For {self.__class__.__name__}, phy {self.phy_channel}"
-                                      f", invalid for bkn1:{bkn1} bkn2:{bkn2}")
+                    raise ValueError(f"For {self.__class__.__name__}, phy {self.phy_channel}"
+                                     f", invalid for bkn1:{bkn1} bkn2:{bkn2}")
 
             case (ChannelKind.CONTROL_TYPE, ChannelKind.TRAFFIC_TYPE):
                 # BKN1 stolen for STCH on TP with FN:[1,17], and BKN2 as TCH
@@ -234,16 +241,17 @@ class NormalUplinkBurst(Burst):
                 if self.phy_channel != PhyType.TRAFFIC_CHANNEL:
                     raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                      f" invalid for bkn1:{bkn1} bkn2:{bkn2} (expected TP)")
-                if not 1<= self.frame_number < MULTIFRAME_TDMAFRAME_LENGTH:
+                if not 1 <= self.frame_number < MULTIFRAME_TDMAFRAME_LENGTH:
                     raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                      f", FN {self.frame_number} invalid for bkn1:{bkn1} bkn2:{bkn2}")
 
             case (ChannelKind.CONTROL_TYPE, _):
                 if bkn2 == ChannelKind.CONTROL_TYPE:
-                    if (input_logical_ch_bkn2 is not None
-                        and input_logical_ch_bkn2.channel != input_logical_ch_bkn1.channel):
-                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
-                                         f" invalid combination bkn1:{bkn1} bkn2:{bkn2}")
+                    if input_logical_ch_bkn2 is not None:
+                        if input_logical_ch_bkn2.channel != input_logical_ch_bkn1.channel:
+                            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+                                             f" invalid combination bkn1:{bkn1} bkn2:{bkn2}")
+
                     # BKN1 and BKN2 stolen for STCH on TP with FN:[1,17]
                     self.mixed_burst = True
                     self.burst_type = BurstContent.BURST_TRAFFIC_TYPE
@@ -251,7 +259,7 @@ class NormalUplinkBurst(Burst):
                     if self.phy_channel != PhyType.TRAFFIC_CHANNEL:
                         raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                          f" invalid for bkn1:{bkn1} bkn2:{bkn2} (expected TP)")
-                    if not 1<= self.frame_number < MULTIFRAME_TDMAFRAME_LENGTH:
+                    if not 1 <= self.frame_number < MULTIFRAME_TDMAFRAME_LENGTH:
                         raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                          f", FN {self.frame_number} invalid for bkn1:{bkn1} bkn2:{bkn2}")
                 else:
@@ -261,7 +269,8 @@ class NormalUplinkBurst(Burst):
             case _:
                 # Invalid combo of channels
                 raise ValueError(f"For {type(self).__name__}, invalid combination bkn1:{bkn1} bkn2:{bkn2}")
-         # Build the burst
+
+        # Build the burst
         d = self.start_guard_bit_period
         burst_bit_seq = empty(shape=(self.sn_max*2)+d+self.end_guard_bit_period, dtype=uint8)
 
@@ -294,16 +303,19 @@ class NormalUplinkBurst(Burst):
             # add following bits per 9.4.5.3
             # Insert phase adjustment bits f
             burst_bit_seq[462+d:464+d] = calculate_phase_adjustment_bits(burst_bit_seq,
-                                                                  PHASE_ADJUSTMENT_SYMBOL_RANGE["e"], d)
+                                                                         PHASE_ADJUSTMENT_SYMBOL_RANGE["e"], d)
             burst_bit_seq[464+d:466+d] = TAIL_BITS[:2]
             burst_bit_seq[466+d:510] = NORMAL_TRAINING_SEQUENCE[2][0:10]
             self.end_ramp_period = 0
 
         return burst_bit_seq
-    def deconstuct_burst_sequence(self):
+
+    def deconstuct_burst_sequence(self) -> None:
+
         raise NotImplementedError
 
 ###################################################################################################
+
 
 class DownlinkHost(Protocol):
     # host protocol for the mixin to satisfy typing for both normal and synchronous downlink mixins
@@ -312,13 +324,14 @@ class DownlinkHost(Protocol):
     multiframe_number: int
     timeslot: int
 
+
 class NormalDownlinkMixin:
 
-    def _norm_bkin(self, logical_ch:LogicalChannelVD) -> str:
+    def _norm_bkin(self, logical_ch: LogicalChannelVD) -> str:
         return (logical_ch.channel_type if logical_ch.channel_type == ChannelKind.TRAFFIC_TYPE
                 else logical_ch.channel)
 
-    def _validate_normal_downlink_mapping(self:DownlinkHost, bkn1: str,
+    def _validate_normal_downlink_mapping(self: DownlinkHost, bkn1: str,
                                           bkn2: str | None) -> tuple[BurstContent, bool, int]:
         """
         Validates (bkn1, bkn2) for normal downlink burst usage across CP/TP/UP
@@ -459,6 +472,7 @@ class NormalDownlinkMixin:
 
 ###################################################################################################
 
+
 class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
     sn_max = 255
     start_guard_bit_period = 0
@@ -474,10 +488,10 @@ class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
     multiframe_number: int
     timeslot: int
 
-    def construct_burst_sequence(self, input_logical_ch_bkn1:TrafficChannel | SCH_F |STCH | SCH_HD,
-                                    input_logical_ch_bbk:AACH,
-                                    input_logical_ch_bkn2:TrafficChannel | BLCH | BNCH | STCH | SCH_HD | None =None,
-                                    ramp_up_down_state:tuple[bool,bool]=(False, False)):
+    def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH | SCH_HD,
+                                 input_logical_ch_bbk: AACH,
+                                 input_logical_ch_bkn2: TrafficChannel | BLCH | BNCH | STCH | SCH_HD | None = None,
+                                 ramp_up_down_state: tuple[bool, bool] = (False, False)) -> NDArray[uint8]:
         # If bkn1 is control, we care about the specific channel type, if it is traffic we dont care for bkn1
         bkn1 = self._norm_bkin(input_logical_ch_bkn1)
         bkn2 = None if input_logical_ch_bkn2 is None else self._norm_bkin(input_logical_ch_bkn2)
@@ -526,10 +540,12 @@ class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
         burst_bit_seq[498:500] = calculate_phase_adjustment_bits(burst_bit_seq, PHASE_ADJUSTMENT_SYMBOL_RANGE['b'], 0)
 
         return burst_bit_seq
-    def deconstuct_burst_sequence(self):
+
+    def deconstuct_burst_sequence(self) -> None:
         raise NotImplementedError
 
 ###################################################################################################
+
 
 class NormalDiscontDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
     sn_max = 246
@@ -546,10 +562,10 @@ class NormalDiscontDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
     multiframe_number: int
     timeslot: int
 
-    def construct_burst_sequence(self, input_logical_ch_bkn1:TrafficChannel | SCH_F | STCH | SCH_HD,
-                                    input_logical_ch_bbk:AACH,
-                                    input_logical_ch_bkn2:TrafficChannel | BLCH | BNCH | STCH | SCH_HD | None =None,
-                                    ramp_up_down_state:tuple[bool,bool]=(True,True)):
+    def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH | SCH_HD,
+                                 input_logical_ch_bbk: AACH,
+                                 input_logical_ch_bkn2: TrafficChannel | BLCH | BNCH | STCH | SCH_HD | None = None,
+                                 ramp_up_down_state: tuple[bool, bool] = (True, True)) -> NDArray[uint8]:
         # If bkn1 is control, we care about the specific channel type, if it is traffic we dont care for bkn1
         bkn1 = self._norm_bkin(input_logical_ch_bkn1)
         bkn2 = None if input_logical_ch_bkn2 is None else self._norm_bkin(input_logical_ch_bkn2)
@@ -599,14 +615,16 @@ class NormalDiscontDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
             burst_bit_seq[492+d:510] = NORMAL_TRAINING_SEQUENCE[2][2:10]
             self.end_ramp_period = 0
         return burst_bit_seq
-    def deconstuct_burst_sequence(self):
+
+    def deconstuct_burst_sequence(self) -> None:
         raise NotImplementedError
 
 ###################################################################################################
 
+
 class SynchronousDownlinkMixin:
 
-    def _validate_normal_downlink_mapping(self:DownlinkHost, bkn1: str,
+    def _validate_normal_downlink_mapping(self: DownlinkHost, bkn1: str,
                                           bkn2: str | None) -> tuple[BurstContent, bool]:
         """
         Validates (bkn1, bkn2) for synchronous downlink burst usage across CP/TP/UP
@@ -734,11 +752,12 @@ class SynchronousDownlinkMixin:
                     return (burst_type, mixed)
                 else:
                     raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
-                                        f" invalid for bkn1:{bkn1} bkn2:{bkn2}")
+                                     f" invalid for bkn1:{bkn1} bkn2:{bkn2}")
             case _:
                 raise ValueError(f"For {type(self).__name__}, invalid combination bkn1:{bkn1} bkn2:{bkn2}")
 
 ###################################################################################################
+
 
 class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
     sn_max = 255
@@ -755,17 +774,17 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
     multiframe_number: int
     timeslot: int
 
-    def construct_burst_sequence(self, input_logical_ch_sb:BSCH | SCH_HD,
-                                        input_logical_ch_bbk:AACH,
-                                        input_logical_ch_bkn2:BNCH | BLCH | SCH_HD,
-                                        ramp_up_down_state:tuple[bool,bool]=(False, False)):
+    def construct_burst_sequence(self, input_logical_ch_sb: BSCH | SCH_HD,
+                                 input_logical_ch_bbk: AACH,
+                                 input_logical_ch_bkn2: BNCH | BLCH | SCH_HD,
+                                 ramp_up_down_state: tuple[bool, bool] = (False, False)) -> NDArray[uint8]:
         if input_logical_ch_bbk.channel != ChannelName.AACH_CHANNEL:
             raise ValueError(f"Passed broadcast block is invalid for {type(self).__name__} expected"
                              f" {ChannelName.AACH_CHANNEL}")
 
         bkn1 = input_logical_ch_sb.channel
         bkn2 = input_logical_ch_bkn2.channel
-        _, multiple_logical_ch_state = self._validate_normal_downlink_mapping(bkn1,bkn2)
+        _, multiple_logical_ch_state = self._validate_normal_downlink_mapping(bkn1, bkn2)
         self.mixed_burst = multiple_logical_ch_state
 
         # Build the burst
@@ -785,7 +804,7 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
         burst_bit_seq[94:214] = input_logical_ch_sb.type_5_blocks[0][:120]
         burst_bit_seq[214:252] = SYNCHRONIZATION_TRAINING_SEQUENCE
         burst_bit_seq[252:282] = input_logical_ch_bbk.type_5_blocks[0]
-        burst_bit_seq[282:498] = input_logical_ch_bkn2.type_5_blocks[0][:216] # type: ignore[attr-defined]
+        burst_bit_seq[282:498] = input_logical_ch_bkn2.type_5_blocks[0][:216]   # type: ignore[attr-defined]
         # temporarily skip phase adjustment bits D - [498:500]
         if ramp_up_down_state[1]:
             # if we are ramp down (TRUE), it means that this is the last burst we are ramping down
@@ -797,14 +816,15 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
             self.end_ramp_period = 0
 
         # Now insert phase adjustment bits
-        burst_bit_seq[12:14] = calculate_phase_adjustment_bits(burst_bit_seq, PHASE_ADJUSTMENT_SYMBOL_RANGE['c'],0)
-        burst_bit_seq[498:500] = calculate_phase_adjustment_bits(burst_bit_seq, PHASE_ADJUSTMENT_SYMBOL_RANGE['d'],0)
+        burst_bit_seq[12:14] = calculate_phase_adjustment_bits(burst_bit_seq, PHASE_ADJUSTMENT_SYMBOL_RANGE['c'], 0)
+        burst_bit_seq[498:500] = calculate_phase_adjustment_bits(burst_bit_seq, PHASE_ADJUSTMENT_SYMBOL_RANGE['d'], 0)
         return burst_bit_seq
 
-    def deconstuct_burst_sequence(self):
+    def deconstuct_burst_sequence(self) -> None:
         raise NotImplementedError
 
 ###################################################################################################
+
 
 class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
     sn_max = 246
@@ -821,10 +841,10 @@ class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
     multiframe_number: int
     timeslot: int
 
-    def construct_burst_sequence(self, input_logical_ch_sb:BSCH | SCH_HD,
-                                        input_logical_ch_bbk:AACH,
-                                        input_logical_ch_bkn2:BNCH | BLCH | SCH_HD,
-                                        ramp_up_down_state:tuple[bool,bool]=(True, True)):
+    def construct_burst_sequence(self, input_logical_ch_sb: BSCH | SCH_HD,
+                                 input_logical_ch_bbk: AACH,
+                                 input_logical_ch_bkn2: BNCH | BLCH | SCH_HD,
+                                 ramp_up_down_state: tuple[bool, bool] = (True, True)) -> NDArray[uint8]:
         if input_logical_ch_bbk.channel != ChannelName.AACH_CHANNEL:
             raise ValueError(f"Passed broadcast block is invalid for {type(self).__name__} expected"
                              f" {ChannelName.AACH_CHANNEL}")
@@ -832,7 +852,7 @@ class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
         bkn1 = input_logical_ch_sb.channel
         bkn2 = input_logical_ch_bkn2.channel
 
-        _, multiple_logical_ch_state = self._validate_normal_downlink_mapping(bkn1,bkn2)
+        _, multiple_logical_ch_state = self._validate_normal_downlink_mapping(bkn1, bkn2)
         self.mixed_burst = multiple_logical_ch_state
 
         # Build the burst
@@ -872,14 +892,15 @@ class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
             self.end_ramp_period = 0
         return burst_bit_seq
 
-    def deconstuct_burst_sequence(self):
+    def deconstuct_burst_sequence(self) -> None:
         raise NotImplementedError
 
 ###################################################################################################
 
+
 class LinearizationUplinkBurst(Burst):
     sn_max = 240
-    start_guard_bit_period = 34 # not in the standard just chosen
+    start_guard_bit_period = 34    # not in the standard just chosen
     end_guard_bit_period = 15
     subslot_width = 1
     link_direction = LinkDirection.UPLINK
@@ -887,15 +908,15 @@ class LinearizationUplinkBurst(Burst):
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
 
-    def construct_burst_sequence(self, input_logical_ch_ssn1:CLCH):
-        if self.phy_channel == PhyType.TRAFFIC_CHANNEL or self.phy_channel == PhyType.CONTROL_CHANNEL:
+    def construct_burst_sequence(self, input_logical_ch_ssn1: CLCH) -> NDArray[uint8]:
+        if self.phy_channel in (PhyType.TRAFFIC_CHANNEL, PhyType.CONTROL_CHANNEL):
             if self.frame_number != CONTROL_FRAME_NUMBER:
                 raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                  f", FN {self.frame_number} invalid for ssn{self.subslot}"
                                  f": {input_logical_ch_ssn1.channel}")
             if (self.multiframe_number + self.timeslot) % 4 != 3:
-                raise ValueError (f"For {type(self).__name__}, (MN+TN)%4 != 3 for CP control frame "
-                                f"(MN={self.multiframe_number}, TN={self.timeslot})") #per 9.5.2 (74)
+                raise ValueError(f"For {type(self).__name__}, (MN+TN)%4 != 3 for CP control frame "
+                                 f"(MN={self.multiframe_number}, TN={self.timeslot})")  # per 9.5.2 (74)
         if self.subslot != 1:
             raise ValueError(f" For {type(self).__name__}, subslot {self.subslot} is invalid, expected (1)")
 
@@ -914,10 +935,11 @@ class LinearizationUplinkBurst(Burst):
         self.end_ramp_period = self.end_guard_bit_period
         return burst_bit_seq
 
-    def deconstuct_burst_sequence(self):
+    def deconstuct_burst_sequence(self) -> None:
         raise NotImplementedError
 
 ###################################################################################################
+
 
 class NullHalfslotUplinkBurst(Burst):
     sn_max = 255
@@ -929,10 +951,10 @@ class NullHalfslotUplinkBurst(Burst):
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
 
-    def construct_burst_sequence(self):
+    def construct_burst_sequence(self) -> NDArray[uint8]:
         return zeros(shape=self.sn_max, dtype=uint8)
 
-    def deconstuct_burst_sequence(self):
+    def deconstuct_burst_sequence(self) -> NDArray[uint8]:
         return zeros(shape=self.sn_max, dtype=uint8)
 
 ###################################################################################################
