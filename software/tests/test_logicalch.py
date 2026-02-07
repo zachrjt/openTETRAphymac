@@ -1,4 +1,6 @@
 # pylint: skip-file
+# flake8: noqa
+# type: ignore
 import sys
 import pytest
 from pathlib import Path

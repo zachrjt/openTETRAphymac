@@ -1,4 +1,6 @@
 # pylint: skip-file
+# flake8: noqa
+# type: ignore
 # ZT - 2026
 import numpy as np
 import matplotlib.pyplot as plt
@@ -29,10 +31,10 @@ def channel_power(f, P, fc, B):
 def spectrum_and_acpr(yreal, yideal, Fs):
     if yideal is not None:
         #windowIdeal = np.hanning(len(yideal))
-        windowIdeal = np.ones(len(yideal), dtype=np.float32)
+        windowIdeal = np.ones(len(yideal), dtype=np.float64)
 
     #windowReal = np.hanning(len(yreal))
-    windowReal = np.ones(len(yreal), dtype=np.float32)
+    windowReal = np.ones(len(yreal), dtype=np.float64)
 
 
     f, Pyreal = spectrum_db(yreal*windowReal, Fs)
@@ -158,7 +160,7 @@ def main():
         ramp_data.append((ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period))
         print(f"Ramp offsets for {n}: {ramp_data[n]}")
 
-    offsetF = tetraConstants.BASEBAND_SAMPLING_FACTOR*255
+    offsetF = tetraConstants.TX_BB_SAMPLING_FACTOR*255
     I_data = np.zeros(shape=(offsetF*7), dtype=np.int64)
     Q_data = np.zeros(shape=(offsetF*7), dtype=np.int64)
 
@@ -177,12 +179,12 @@ def main():
 
     scale = float((1 << tetraUtil.NUMBER_OF_FRACTIONAL_BITS))
 
-    I_real = I_data.astype(np.float32) / scale
-    Q_real = Q_data.astype(np.float32) / scale
+    I_real = I_data.astype(np.float64) / scale
+    Q_real = Q_data.astype(np.float64) / scale
     yreal = (I_real) + 1.0j*(Q_real)
     yreal = yreal.astype(np.complex64)
 
-    Fs = tetraConstants.BASEBAND_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE
+    Fs = tetraConstants.TX_BB_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE
 
     #Envelope comparison
     power_envelope(yreal, None, Fs)
@@ -214,15 +216,15 @@ def main():
 
     scale = float((1 << tetraUtil.NUMBER_OF_FRACTIONAL_BITS))
 
-    I_real = I_real.astype(np.float32) / scale
-    Q_real = Q_real.astype(np.float32) / scale
+    I_real = I_real.astype(np.float64) / scale
+    Q_real = Q_real.astype(np.float64) / scale
     yreal = (I_real) + 1.0j*(Q_real)
     yreal = yreal.astype(np.complex64)
 
     yideal = I_ideal + 1.0j*Q_ideal
     yideal = yideal.astype(np.complex64)
 
-    Fs = tetraConstants.BASEBAND_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE
+    Fs = tetraConstants.TX_BB_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE
 
     # Envelope comparison
     power_envelope(yreal, yideal, Fs)
@@ -265,15 +267,15 @@ def main():
 
     scale = float((1 << tetraUtil.NUMBER_OF_FRACTIONAL_BITS))
 
-    I_real = I_real.astype(np.float32) / scale
-    Q_real = Q_real.astype(np.float32) / scale
+    I_real = I_real.astype(np.float64) / scale
+    Q_real = Q_real.astype(np.float64) / scale
     yreal = (I_real) + 1.0j*(Q_real)
     yreal = yreal.astype(np.complex64)
 
     yideal = I_ideal + 1.0j*Q_ideal
     yideal = yideal.astype(np.complex64)
 
-    Fs = tetraConstants.BASEBAND_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE
+    Fs = tetraConstants.TX_BB_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE
     # Envelope comparison
     power_envelope(yreal, yideal, Fs)
 
