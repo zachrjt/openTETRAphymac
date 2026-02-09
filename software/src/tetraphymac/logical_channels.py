@@ -663,6 +663,15 @@ class TCH_S(TrafficChannel):  # pylint: disable=invalid-name
         self.channel = ChannelName.TCH_S_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
+        """
+        Performs encoding of M blocks of type-1 bits in input_data_blocks into M blocks within self.type_5_blocks
+
+        :param self: TCH_S logical channel
+        :param input_data_blocks: 2 dimensional input binary uint8 array of length 432, M blocks/rows
+         to be encoded into M self.type_5_blocks of length 432 if a full slot or 216 (first 216 type-1 are dropped)
+         if half slot in the case of a stolen block A, for control purposes via STCH.
+        :type input_data_blocks: NDArray[uint8]
+        """
         self.m = input_data_blocks.shape[0]
         self.type_1_blocks = input_data_blocks.copy()
         self.validate_k_length(1)
@@ -683,6 +692,16 @@ class TCH_S(TrafficChannel):  # pylint: disable=invalid-name
         self.validate_k_length(5)
 
     def decode_type5_bits(self, input_data_blocks: NDArray[uint8]):
+        """
+        Performs decoding of M blocks of type-5 bits in input_data_blocks into M blocks within self.type_1_blocks
+
+        :param self: TCH_S logical channel
+        :param input_data_blocks: 2 dimensional input binary uint8 array of length 216 or 432, with M blocks/rows
+         to be decoded into M self.type_1_blocks of length 216 or 432. In the case of a stolen block A, for control
+         purposes via STCH, the self.type_1_blocks is only 216 bits long and input_data_blocks
+         has only 216 bits per row/block.
+        :type input_data_blocks: NDArray[uint8]
+        """
         self.m = input_data_blocks.shape[0]
         self.type_5_blocks = input_data_blocks.copy()
         self.validate_k_length(5)
@@ -702,6 +721,13 @@ class TCH_S(TrafficChannel):  # pylint: disable=invalid-name
         self.validate_k_length(1)
 
     def steal_block_a(self):
+        """
+        In the case of the MAC frame stealling during speech traffic,
+        Block A (the first 216 type 1 bits), is stolen and discarded, the remaining 216 bits of Block B are re-encoded
+        and transmitted alongside 216 bits of STCH, the result is a effective loss of speech data with no recovery path
+
+        :param self: TCH_S logical channel
+        """
         # in the case we are allocating bursts and we must steal a traffic channel with a full slot TCH/S,
         # we must remap into a half one
         # this method just remaps an existing full slot TCH/S into a halve one, discarding block A bits
@@ -729,6 +755,14 @@ class TCH_7_2(TrafficChannel):  # pylint: disable=invalid-name
         self.channel = ChannelName.TCH_7_2_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
+        """
+        Performs encoding of M blocks of type-1 bits in input_data_blocks into M blocks within self.type_5_blocks
+
+        :param self: TCH_7_2 logical channel
+        :param input_data_blocks: 2 dimensional input binary uint8 array of length 432, M blocks/rows
+         to be encoded into M self.type_5_blocks of length 432
+        :type input_data_blocks: NDArray[uint8]
+        """
         self.m = input_data_blocks.shape[0]
         self.type_1_blocks = input_data_blocks
         self.validate_k_length(1)
@@ -741,6 +775,14 @@ class TCH_7_2(TrafficChannel):  # pylint: disable=invalid-name
         self.validate_k_length(5)
 
     def decode_type5_bits(self, input_data_blocks: NDArray[uint8]):
+        """
+        Performs decoding of M blocks of type-5 bits in input_data_blocks into M blocks within self.type_1_blocks
+
+        :param self: TCH_7_2 logical channel
+        :param input_data_blocks: 2 dimensional input binary uint8 array of length 432, with M blocks/rows
+         to be decoded into M self.type_1_blocks of length 432.
+        :type input_data_blocks: NDArray[uint8]
+        """
         self.m = input_data_blocks.shape[0]
         self.type_5_blocks = input_data_blocks
         self.validate_k_length(5)
@@ -769,6 +811,16 @@ class TCH_4_8(TrafficChannel):  # pylint: disable=invalid-name
         self.channel = ChannelName.TCH_4_8_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
+        """
+        Performs encoding of M blocks of type-1 bits in input_data_blocks into (N+M-1) blocks within self.type_5_blocks
+        N is configured during initialization or can be changed afterwords and corresponds to the block interleaving
+        amount with values [1, 4, 8]
+
+        :param self: TCH_4_8 logical channel
+        :param input_data_blocks: 2 dimensional input binary uint8 array of length 288, M blocks/rows
+         to be encoded into N+M-1 self.type_5_blocks of length 432
+        :type input_data_blocks: NDArray[uint8]
+        """
         self.m = input_data_blocks.shape[0]
         self.type_1_blocks = input_data_blocks
         self.validate_k_length(1)
@@ -789,6 +841,16 @@ class TCH_4_8(TrafficChannel):  # pylint: disable=invalid-name
         self.validate_k_length(5)
 
     def decode_type5_bits(self, input_data_blocks: NDArray[uint8]):
+        """
+        Performs decoding of L blocks of type-5 bits in input_data_blocks into M blocks within self.type_1_blocks, with
+        the relationship M = (L-N+1), where M is number of input transmitted data blocks, and N is the interleaving
+        value, which is configured during initialization or can be changed afterwords with values [1, 4, 8]
+
+        :param self: TCH_4_8 logical channel
+        :param input_data_blocks: 2 dimensional input binary uint8 array of length 432, with L blocks/rows
+         to be decoded into M (L-N+1) self.type_1_blocks of length 292.
+        :type input_data_blocks: NDArray[uint8]
+        """
         self.m = len(input_data_blocks) + 1 - self.n
         self.type_5_blocks = input_data_blocks
         self.validate_k_length(5)
@@ -826,6 +888,16 @@ class TCH_2_4(TrafficChannel):  # pylint: disable=invalid-name
         self.channel = ChannelName.TCH_2_4_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
+        """
+        Performs encoding of M blocks of type-1 bits in input_data_blocks into (N+M-1) blocks within self.type_5_blocks
+        N is configured during initialization or can be changed afterwords and corresponds to the block interleaving
+        amount with values of [1, 4, 8]
+
+        :param self: TCH_2_4 logical channel
+        :param input_data_blocks: 2 dimensional input binary uint8 array of length 144, M blocks/rows
+         to be encoded into N+M-1 self.type_5_blocks of length 432
+        :type input_data_blocks: NDArray[uint8]
+        """
         self.m = input_data_blocks.shape[0]
         self.type_1_blocks = input_data_blocks
         self.validate_k_length(1)
@@ -847,6 +919,16 @@ class TCH_2_4(TrafficChannel):  # pylint: disable=invalid-name
         self.validate_k_length(5)
 
     def decode_type5_bits(self, input_data_blocks: NDArray[uint8]):
+        """
+        Performs decoding of L blocks of type-5 bits in input_data_blocks into M blocks within self.type_1_blocks, with
+        the relationship M = (L-N+1), where M is number of input transmitted data blocks, and N is the interleaving
+        value, which is configured during initialization or can be changed afterwords with values [1, 4, 8]
+
+        :param self: TCH_2_4 logical channel
+        :param input_data_blocks: 2 dimensional input binary uint8 array of length 432, with L blocks/rows
+         to be decoded into M (L-N+1) self.type_1_blocks of length 144.
+        :type input_data_blocks: NDArray[uint8]
+        """
         self.m = input_data_blocks.shape[0] + 1 - self.n
         self.type_5_blocks = input_data_blocks
         self.validate_k_length(5)

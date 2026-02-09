@@ -3,6 +3,7 @@ coding_scrambling.py contains the CRC, interleaving, encoding, and scrambling me
 converting type 1 bits into type 5 bits for logical channels.
 """
 from math import gcd
+from typing import Dict, Any
 from collections import deque
 from numpy import zeros, full, uint32, argmin, uint8, array, arange, empty, broadcast_to, asarray, bitwise_or, \
     bitwise_xor, bitwise_count, flatnonzero, int32, clip
@@ -99,7 +100,7 @@ def _build_rcpc_transition_table() -> dict[int, list[tuple[int, int, list[int]]]
         dict[int,list[tuple[int,int,list[int]]]]: keys of dest. RCPC states, with values of
         [origin RCPC state, input bit, four output bits[1,2,3,4]]
     """
-    temp_table: dict
+    temp_table: Dict[int, Any]
     temp_table = {i: [] for i in range(16)}  # each key is one of the 16 states,
 
     states = [[(i >> 3) & 0b1, (i >> 2) & 0b1, (i >> 1) & 0b1, i & 0b1] for i in range(16)]
@@ -373,7 +374,7 @@ def rcpc_encoder(input_data: NDArray[uint8], k2: int, k3: int) -> NDArray[uint8]
         # j represents output data index
         i = j if div_ratio == 0 else (j + (j // div_ratio))
         # i indexes the puncturing pattern
-        k = 8*(i // t) + punc_vector[i % t] # P indicing equivalent to i - t(i//t) for integers
+        k = 8*(i // t) + punc_vector[i % t]  # P indicing equivalent to i - t(i//t) for integers
         # k indexes the mother-code bitstream
 
         punctured_data.append(encoded_data_temp[k])
