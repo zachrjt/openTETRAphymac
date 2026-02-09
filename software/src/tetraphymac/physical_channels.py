@@ -1,5 +1,17 @@
 """
-physical_channels.py
+physical_channels.py contains the implementations for each type of valid uplink and downlink burst for TETRA V2.4.2.
+each burst has in-depth validation methods to ensure only permissible bursts are being constructed based on subslot,
+slot, frame, multiframe numbers and physical channels.
+
+Each burst contains a construct_burst_sequence method which takes in 1-3 logical channels, depedant on the type of burst
+, validates that the input logical channels are valid and a burst can be built with the passed Physical Channel object
+during initilization and the current subslot, slot, frame, multiframe numbers.
+
+It then constructs the 510 modulation bits for the burst using the logical channel data and training sequences,
+phase adjustment bits, etc.
+
+The returned modulation bits are ready to be fed into a RFTransmitter class alongside the start_ramp_period and
+end_ramp_periods.
 """
 
 from typing import ClassVar, Protocol
@@ -733,26 +745,25 @@ class SynchronousDownlinkMixin:
                                      f" invalid for bkn1:{bkn1} bkn2:{bkn2}")
                 return (burst_type, mixed)
             case (ChannelName.SCH_HD_CHANNEL, _):
-                if bkn2 == ChannelName.SCH_HD_CHANNEL:
-                    # SCH/HD in BKN1, and BKN2 is SCH/HD (or BLCH replacing it):
-                    # - on TP: FN == control frame
-                    # - on CP or UP: FN:[1..18]
-                    if self.phy_channel == PhyType.TRAFFIC_CHANNEL:
-                        if self.frame_number != CONTROL_FRAME_NUMBER:
-                            raise ValueError(f"For {type(self).__name__}, FN {self.frame_number}"
-                                             f" invalid for TP bkn1:{bkn1} bkn2:{bkn2}")
-                    elif self.phy_channel in (PhyType.CONTROL_CHANNEL, PhyType.UNASGN_CHANNEL):
-                        if not 1 <= self.frame_number <= MULTIFRAME_TDMAFRAME_LENGTH:
-                            raise ValueError(
-                                f"For {type(self).__name__}, FN {self.frame_number}"
-                                  f"invalid for phy {self.phy_channel} bkn1:{bkn1} bkn2:{bkn2}")
-                    else:
-                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
-                                         f" invalid for bkn1:{bkn1} bkn2:{bkn2}")
-                    return (burst_type, mixed)
+                if bkn2 != ChannelName.SCH_HD_CHANNEL:
+                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+                                     f" invalid for bkn1:{bkn1} bkn2:{bkn2}")
+                # SCH/HD in BKN1, and BKN2 is SCH/HD (or BLCH replacing it):
+                # - on TP: FN == control frame
+                # - on CP or UP: FN:[1..18]
+                if self.phy_channel == PhyType.TRAFFIC_CHANNEL:
+                    if self.frame_number != CONTROL_FRAME_NUMBER:
+                        raise ValueError(f"For {type(self).__name__}, FN {self.frame_number}"
+                                         f" invalid for TP bkn1:{bkn1} bkn2:{bkn2}")
+                elif self.phy_channel in (PhyType.CONTROL_CHANNEL, PhyType.UNASGN_CHANNEL):
+                    if not 1 <= self.frame_number <= MULTIFRAME_TDMAFRAME_LENGTH:
+                        raise ValueError(
+                            f"For {type(self).__name__}, FN {self.frame_number}"
+                            f"invalid for phy {self.phy_channel} bkn1:{bkn1} bkn2:{bkn2}")
                 else:
                     raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
                                      f" invalid for bkn1:{bkn1} bkn2:{bkn2}")
+                return (burst_type, mixed)
             case _:
                 raise ValueError(f"For {type(self).__name__}, invalid combination bkn1:{bkn1} bkn2:{bkn2}")
 
