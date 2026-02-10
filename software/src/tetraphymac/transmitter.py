@@ -19,10 +19,10 @@ testing.
 from abc import ABC, abstractmethod
 from typing import ClassVar, Literal
 from numpy import complex64, float64, uint8, zeros, mean, \
-    int64, concatenate, full, sqrt, zeros_like, repeat, sin, cos, complex128
+    int64, concatenate, full, sqrt, zeros_like, repeat, sin, cos, complex128, pad
 from numpy.random import Generator, PCG64
 from numpy.typing import NDArray
-from scipy.signal import bessel, sosfilt
+from scipy.signal import bessel, sosfilt, sosfilt_zi
 
 from .tx_rx_utilities import power_ramping_float, \
     power_ramping_quantized, assert_tail_is_zero, oversample_data_quantized, oversample_data_float, \
@@ -92,6 +92,11 @@ class RFTransmitter(ABC):
     _q_ch_phase_err = float(0.0174533)
     _q_ch_phase_correction = float(0)
 
+    _q_bessel_state: NDArray[float64]
+    _i_bessel_state: NDArray[float64]
+
+    sos = bessel(9, 100E3, btype='lowpass', analog=False, fs=float(TRANSMIT_SIMULATION_SAMPLE_RATE), output="sos")
+
     def __init__(self):
         pass
 
@@ -114,7 +119,8 @@ class RFTransmitter(ABC):
 
     @abstractmethod
     def _analog_reconstruction(self, i_ch: NDArray[float64],
-                               q_ch: NDArray[float64]
+                               q_ch: NDArray[float64],
+                               burst_ramp_periods: tuple[int, int]
                                ) -> NDArray[complex128]:
         """
         base abstract method that takes in DAC codes at rate Rs, converts to real floats with ZOH with
@@ -323,7 +329,7 @@ class RFTransmitter(ABC):
             return i_float, q_float
         # 7. Create tx representation
 
-        rf_data = self._analog_reconstruction(i_float, q_float)
+        rf_data = self._analog_reconstruction(i_float, q_float, burst_ramp_periods)
 
         return rf_data
 
@@ -343,6 +349,9 @@ class RealTransmitter(RFTransmitter):
     halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_Q17_COEFFICIENTS)-1), dtype=int64)
     halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_Q17_COEFFICIENTS)-1), dtype=int64)
     halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_Q17_COEFFICIENTS)-1), dtype=int64)
+
+    _q_bessel_state = zeros(shape=0, dtype=float64)
+    _i_bessel_state = zeros(shape=0, dtype=float64)
 
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
                              burst_ramp_periods: tuple[int, int]) -> tuple[NDArray[int64], NDArray[int64]]:
@@ -450,9 +459,9 @@ class RealTransmitter(RFTransmitter):
         """
         # 1. Round Q17 data to 10bits for DAC
         i_dac_bits = q17_rounding(i_ch.copy().astype(int64),
-                                  "rtz", NUMBER_OF_FRACTIONAL_BITS - (OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1))
+                                  "rti", NUMBER_OF_FRACTIONAL_BITS - (OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1))
         q_dac_bits = q17_rounding(q_ch.copy().astype(int64),
-                                  "rtz", NUMBER_OF_FRACTIONAL_BITS - (OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1))
+                                  "rti", NUMBER_OF_FRACTIONAL_BITS - (OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1))
 
         # 2. Convert to float64 values
         i_float_data = i_dac_bits.astype(float64) / float(1 << 9)
@@ -496,7 +505,8 @@ class RealTransmitter(RFTransmitter):
         return i_float_data, q_float_data
 
     def _analog_reconstruction(self, i_ch: NDArray[float64],
-                               q_ch: NDArray[float64]
+                               q_ch: NDArray[float64],
+                               burst_ramp_periods: tuple[int, int]
                                ) -> NDArray[complex128]:
         """
         Takes in DAC codes at rate Rs, converts to real floats with ZOH with
@@ -509,12 +519,25 @@ class RealTransmitter(RFTransmitter):
         q_float_data = repeat(q_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
 
         # 2. Perform analog reconstruction filtering
-        # First Generate bessel function coefficents
-        sos = bessel(9, 100E3, btype='lowpass', analog=False,
-                     fs=float(TRANSMIT_SIMULATION_SAMPLE_RATE), output="sos")
         # Apply filtering to each channel individually
-        analog_i = sosfilt(sos, i_float_data)
-        analog_q = sosfilt(sos, q_float_data)
+        if self._i_bessel_state.size == 0:
+            self._i_bessel_state = sosfilt_zi(self.sos) * i_float_data[0]
+            self._q_bessel_state = sosfilt_zi(self.sos) * q_float_data[0]
+
+        # If we are not continuous with previous burst then we can pre-pend a pad
+        # If we are not continuous with subsequent burst then we can post-pend a pad
+        # Pad lengths are just set to 10 symbols
+        pad_len = 10 * TRANSMIT_SIMULATION_SAMPLING_FACTOR * TX_BB_SAMPLING_FACTOR
+        pads = (0 if burst_ramp_periods[0] == 0 else pad_len, 0 if burst_ramp_periods[1] == 0 else pad_len)
+        i_float_data = pad(i_float_data, pads, 'constant', constant_values=(i_float_data[0], i_float_data[-1]))
+        q_float_data = pad(q_float_data, pads, 'constant', constant_values=(q_float_data[0], q_float_data[-1]))
+
+        analog_i, self._i_bessel_state = sosfilt(self.sos, i_float_data, zi=self._i_bessel_state)
+        analog_q, self._q_bessel_state = sosfilt(self.sos, q_float_data, zi=self._q_bessel_state)
+
+        # Discard padding
+        analog_i = analog_i[pads[0]: None if pads[1] == 0 else -pads[1]]
+        analog_q = analog_q[pads[0]: None if pads[1] == 0 else -pads[1]]
 
         # TODO: Add phase noise simulation
 
@@ -542,6 +565,9 @@ class IdealTransmitter(RFTransmitter):
     halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_FLOAT_COEFFICIENTS)-1), dtype=float64)
     halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_FLOAT_COEFFICIENTS)-1), dtype=float64)
     halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_FLOAT_COEFFICIENTS)-1), dtype=float64)
+
+    _q_bessel_state = zeros(shape=0, dtype=float64)
+    _i_bessel_state = zeros(shape=0, dtype=float64)
 
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
                              burst_ramp_periods: tuple[int, int]) -> tuple[NDArray[float64], NDArray[float64]]:
@@ -649,7 +675,8 @@ class IdealTransmitter(RFTransmitter):
         return i_float_data, q_float_data
 
     def _analog_reconstruction(self, i_ch: NDArray[float64],
-                               q_ch: NDArray[float64]
+                               q_ch: NDArray[float64],
+                               burst_ramp_periods: tuple[int, int]
                                ) -> NDArray[complex128]:
         """
         Takes in DAC codes at rate Rs, converts to real floats with ZOH with
@@ -662,15 +689,27 @@ class IdealTransmitter(RFTransmitter):
         q_float_data = repeat(q_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
 
         # 2. Perform analog reconstruction filtering
-        # First Generate bessel function coefficents
-        sos = bessel(9, 100E3, btype='lowpass', analog=False,
-                     fs=float(TRANSMIT_SIMULATION_SAMPLE_RATE), output="sos")
         # Apply filtering to each channel individually
-        analog_i = sosfilt(sos, i_float_data)
-        analog_q = sosfilt(sos, q_float_data)
+        if self._i_bessel_state.size == 0:
+            self._i_bessel_state = sosfilt_zi(self.sos) * i_float_data[0]
+            self._q_bessel_state = sosfilt_zi(self.sos) * q_float_data[0]
 
-        # TODO: Add phase noise simulation
+        # If we are not continuous with previous burst then we can pre-pend a pad
+        # If we are not continuous with subsequent burst then we can post-pend a pad
+        # The reason for adding pads is simply that a real analog filter would run between and after a non-continuous
+        # burst
+        # Pad lengths are just set to 10 symbols
+        pad_len = 10 * TRANSMIT_SIMULATION_SAMPLING_FACTOR * TX_BB_SAMPLING_FACTOR
+        pads = (0 if burst_ramp_periods[0] == 0 else pad_len, 0 if burst_ramp_periods[1] == 0 else pad_len)
+        i_float_data = pad(i_float_data, pads, 'constant', constant_values=(i_float_data[0], i_float_data[-1]))
+        q_float_data = pad(q_float_data, pads, 'constant', constant_values=(q_float_data[0], q_float_data[-1]))
 
+        analog_i, self._i_bessel_state = sosfilt(self.sos, i_float_data, zi=self._i_bessel_state)
+        analog_q, self._q_bessel_state = sosfilt(self.sos, q_float_data, zi=self._q_bessel_state)
+
+        # Discard padding
+        analog_i = analog_i[pads[0]: None if pads[1] == 0 else -pads[1]]
+        analog_q = analog_q[pads[0]: None if pads[1] == 0 else -pads[1]]
         # 3. Convert to complex signal
 
         rf_signal = zeros_like(analog_i, dtype=complex128)

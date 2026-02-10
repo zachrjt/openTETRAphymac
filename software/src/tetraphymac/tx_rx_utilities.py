@@ -139,7 +139,7 @@ def generate_ramping_lut_quantized(n: int, sps: int = TX_BB_SAMPLING_FACTOR) -> 
     profile = 0.5 * (1.0 - cos(pi * k / (((n-2)*sps)-1)))
     lut = np_round(profile * (1 << NUMBER_OF_FRACTIONAL_BITS)).astype(int64)
     lut[0] = 0
-    lut[-1] = 1 << NUMBER_OF_FRACTIONAL_BITS
+    lut[-1] = (1 << NUMBER_OF_FRACTIONAL_BITS)
 
     # prepend and postpend the full symbol period 0 at the start and 1 at the end
     lut = concatenate((zeros(sps, dtype=int64), lut))
