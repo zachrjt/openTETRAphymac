@@ -18,41 +18,41 @@ from .constants import TX_BB_SAMPLING_FACTOR
 
 NUMBER_OF_FRACTIONAL_BITS = 17        # Relates to Q17 fixed point representation used
 PLUTOSDR_DAC_BIT_NUMBER = 12          # Number of bits in pluto sdr
-OPENTETRAPHYMAC_HW_DAC_NUMBER = 10    # Number of bits in openTETRAphymac hw implementation (AD9115)
+OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER = 10    # Number of bits in openTETRAphymac hw implementation (AD9115)
 
 VALID_ROUNDING_METHODS = ('rti', 'rtz', 'truncate', 'unbiased')
 VALID_START_GUARD_PERIOD_OFFSETS = [0, 10, 12, 34, 120]
 VALID_END_GUARD_PERIOD_OFFSETS = [0, 8, 10, 14, 16]
 
 TX_RRC_Q17_COEFFICIENTS = array(
-    [94, 42, 69, 77, 61, 26, -21, -66, -96, -100, -73, -21, 45, 108, 150, 157, 123, 52, -39, -128,
-     -190, -206, -168, -81, 33, 144, 218, 226, 156, 19, -156, -319, -416, -399, -242, 47, 419, 794,
-     1068, 1141, 934, 420, -361, -1297, -2210, -2881, -3084, -2625, -1385, 653, 3382, 6582, 9936,
-     13080, 15648, 17328, 17912, 17328, 15648, 13080, 9936, 6582, 3382, 653, -1385, -2625, -3084,
-     -2881, -2210, -1297, -361, 420, 934, 1141, 1068, 794, 419, 47, -242, -399, -416, -319, -156,
-     19, 156, 226, 218, 144, 33, -81, -168, -206, -190, -128, -39, 52, 123, 157, 150, 108, 45,
-     -21, -73, -100, -96, -66, -21, 26, 61, 77, 69, 42, 4], dtype=int64)
+    [6, 60, 98, 109, 87, 37, -30, -93, -135, -141, -104, -30, 64, 153, 212, 222, 173, 74, -55, -181,
+     -269, -292, -237, -115, 47, 204, 308, 319, 221, 26, -221, -452, -589, -564, -342, 66, 592, 1122,
+     1511, 1613, 1321, 594, -510, -1834, -3125, -4075, -4361, -3712, -1958, 923, 4783, 9308, 14052,
+     18499, 22130, 24505, 25332, 24505, 22130, 18499, 14052, 9308, 4783, 923, -1958, -3712, -4361,
+     -4075, -3125, -1834, -510, 594, 1321, 1613, 1511, 1122, 592, 66, -342, -564, -589, -452, -221,
+     26, 221, 319, 308, 204, 47, -115, -237, -292, -269, -181, -55, 74, 173, 222, 212, 153, 64, -30,
+     -104, -141, -135, -93, -30, 37, 87, 109, 98, 60, 6], dtype=int64)
 
 TX_RRC_FLOAT_COEFFICIENTS = array(
-    [3.2547283E-05, 3.2207786E-04, 5.2808010E-04, 5.8573583E-04, 4.6815889E-04, 1.9697665E-04,
-     -1.5991251E-04, -5.0379767E-04, -7.3058502E-04, -7.5993093E-04, -5.6027190E-04, -1.6242533E-04,
-     3.4303279E-04, 8.2534668E-04, 1.1462410E-03, 1.1978352E-03, 9.3581964E-04, 3.9825984E-04,
-     -2.9658416E-04, -9.7493920E-04, -1.4502126E-03, -1.5738290E-03, -1.2810810E-03, -6.1880576E-04,
-     2.5482883E-04, 1.1016943E-03, 1.6614646E-03, 1.7233356E-03, 1.1939828E-03, 1.4279077E-04,
-     -1.1910767E-03, -2.4372363E-03, -3.1748905E-03, -3.0411342E-03, -1.8429373E-03, 3.5534150E-04,
-     3.1950125E-03, 6.0541783E-03, 8.1505440E-03, 8.7031256E-03, 7.1246121E-03, 3.2053748E-03,
-     -2.7531665E-03, -9.8923352E-03, -1.6859306E-02, -2.1981161E-02, -2.3528602E-02, -2.0027600E-02,
-     -1.0563596E-02, 4.9805501E-03, 2.5803484E-02, 5.0213095E-02, 7.5808890E-02, 9.9796265E-02,
-     1.1938435E-01, 1.3220197E-01, 1.3666072E-01, 1.3220197E-01, 1.1938435E-01, 9.9796265E-02,
-     7.5808890E-02, 5.0213095E-02, 2.5803484E-02, 4.9805501E-03, -1.0563596E-02, -2.0027600E-02,
-     -2.3528602E-02, -2.1981161E-02, -1.6859306E-02, -9.8923352E-03, -2.7531665E-03, 3.2053748E-03,
-     7.1246121E-03, 8.7031256E-03, 8.1505440E-03, 6.0541783E-03, 3.1950125E-03, 3.5534150E-04,
-     -1.8429373E-03, -3.0411342E-03, -3.1748905E-03, -2.4372363E-03, -1.1910767E-03, 1.4279077E-04,
-     1.1939828E-03, 1.7233356E-03, 1.6614646E-03, 1.1016943E-03, 2.5482883E-04, -6.1880576E-04,
-     -1.2810810E-03, -1.5738290E-03, -1.4502126E-03, -9.7493920E-04, -2.9658416E-04, 3.9825984E-04,
-     9.3581964E-04, 1.1978352E-03, 1.1462410E-03, 8.2534668E-04, 3.4303279E-04, -1.6242533E-04,
-     -5.6027190E-04, -7.5993093E-04, -7.3058502E-04, -5.0379767E-04, -1.5991251E-04, 1.9697665E-04,
-     4.6815889E-04, 5.8573583E-04, 5.2808010E-04, 3.2207786E-04, 3.2547283E-05], dtype=float64)
+    [4.6028807E-05, 4.5548688E-04, 7.4681803E-04, 8.2835555E-04, 6.6207664E-04, 2.7856705E-04,
+     -2.2615044E-04, -7.1247749E-04, -1.0332032E-03, -1.0747046E-03, -7.9234410E-04, -2.2970411E-04,
+     4.8512162E-04, 1.1672165E-03, 1.6210295E-03, 1.6939947E-03, 1.3234488E-03, 5.6322449E-04,
+     -4.1943332E-04, -1.3787722E-03, -2.0509101E-03, -2.2257303E-03, -1.8117221E-03, -8.7512349E-04,
+     3.6038237E-04, 1.5580310E-03, 2.3496656E-03, 2.4371645E-03, 1.6885466E-03, 2.0193664E-04,
+     -1.6844368E-03, -3.4467725E-03, -4.4899732E-03, -4.3008132E-03, -2.6063069E-03, 5.0252874E-04,
+     4.5184297E-03, 8.5619008E-03, 1.1526610E-02, 1.2308078E-02, 1.0075723E-02, 4.5330846E-03,
+     -3.8935654E-03, -1.3989874E-02, -2.3842659E-02, -3.1086056E-02, -3.3274468E-02, -2.8323304E-02,
+     -1.4939181E-02, 7.0435614E-03, 3.6491636E-02, 7.1012035E-02, 1.0720996E-01, 1.4113323E-01,
+     1.6883495E-01, 1.8696181E-01, 1.9326745E-01, 1.8696181E-01, 1.6883495E-01, 1.4113323E-01,
+     1.0720996E-01, 7.1012035E-02, 3.6491636E-02, 7.0435614E-03, -1.4939181E-02, -2.8323304E-02,
+     -3.3274468E-02, -3.1086056E-02, -2.3842659E-02, -1.3989874E-02, -3.8935654E-03, 4.5330846E-03,
+     1.0075723E-02, 1.2308078E-02, 1.1526610E-02, 8.5619008E-03, 4.5184297E-03, 5.0252874E-04,
+     -2.6063069E-03, -4.3008132E-03, -4.4899732E-03, -3.4467725E-03, -1.6844368E-03, 2.0193664E-04,
+     1.6885466E-03, 2.4371645E-03, 2.3496656E-03, 1.5580310E-03, 3.6038237E-04, -8.7512349E-04,
+     -1.8117221E-03, -2.2257303E-03, -2.0509101E-03, -1.3787722E-03, -4.1943332E-04, 5.6322449E-04,
+     1.3234488E-03, 1.6939947E-03, 1.6210295E-03, 1.1672165E-03, 4.8512162E-04, -2.2970411E-04,
+     -7.9234410E-04, -1.0747046E-03, -1.0332032E-03, -7.1247749E-04, -2.2615044E-04, 2.7856705E-04,
+     6.6207664E-04, 8.2835555E-04, 7.4681803E-04, 4.5548688E-04, 4.6028807E-05], dtype=float64)
 
 TX_LPF_Q17_COEFFICIENTS = array(
     [40, 136, 205, 218, 156, 27, -136, -283, -361, -329, -179, 57, 312, 503, 555, 429, 140,
@@ -235,11 +235,11 @@ def save_burst_iqfile(input_data: NDArray[int64] | NDArray[float64] | NDArray[in
 
     elif input_data.dtype == int16:
         # format would be the 10bit dac values for the openTETRAphymac hw
-        hw_dac_num = OPENTETRAPHYMAC_HW_DAC_NUMBER-1
+        hw_dac_num = OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1
         if (temp.max() > ((1 << hw_dac_num)-1) or temp.min() < -(1 << hw_dac_num)):
             raise ValueError(f"Expected 10bit value with maximum + value of "
-                             f"{((1 << OPENTETRAPHYMAC_HW_DAC_NUMBER-1)-1)}, found {np_max(temp)}")
-        temp = left_shift(temp, (dac_bits-OPENTETRAPHYMAC_HW_DAC_NUMBER)).astype(int16)
+                             f"{((1 << OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1)-1)}, found {np_max(temp)}")
+        temp = left_shift(temp, (dac_bits-OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER)).astype(int16)
 
     elif input_data.dtype == float64:
         # normalize data by the complex magnitude of the channels
@@ -431,11 +431,22 @@ def assert_tail_is_zero(i_ch: NDArray[int64 | float64],
 ###################################################################################################
 
 
-def q17_rounding(accumulated_results: NDArray[int64], rounding: str = "rti",
+def q17_rounding(accumulated_results: NDArray[int64],
+                 rounding: Literal["rti"] | Literal["rtz"] | Literal['unbiased'] | Literal['truncate'] = "rti",
                  right_shift_number: int = NUMBER_OF_FRACTIONAL_BITS):
     """
-    Performs rounding on int64 object after accumulation during convolution
+    Performs fixed point rounding on int64 object data, typically used for rounding down convolution
+    accumulation result down to Q17 however can support rounding down to any number of bits.
+
+    :param accumulated_results: int64 data that is in 2's compliments to be rounded down
+    :type accumulated_results: NDArray[int64]
+    :param rounding: The type of rounding, "rti", "rtz" and "truncate are the supported biased methods for ECP5 DSP
+     blocks. Unbiased rounding is for sw usage and uses bankers rounding.
+    :type rounding: Literal["rti"] | Literal["rtz"] | Literal['unbiased'] | Literal['truncate']
+    :param right_shift_number: The number bits to round down, defaults to Q17 rounding e.g. 17
+    :type right_shift_number: int
     """
+
     if rounding not in VALID_ROUNDING_METHODS:
         raise ValueError(f"Rounding method passed of {rounding} invalid, expected type in: {VALID_ROUNDING_METHODS}")
 

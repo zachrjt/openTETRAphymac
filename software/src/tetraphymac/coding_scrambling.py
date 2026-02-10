@@ -659,7 +659,7 @@ def scrambler(input_data: NDArray[uint8], bsch_state: bool = False) -> NDArray[u
     Args:
         input_data (NDArray[uint8]): input binary values stored in uint8 bytes array to be scrambled
         bsch_state (bool, optional): Defaults to False, if the logical channel
-        is BSCH, should set to True to set scramlber init to 0's
+        is BSCH, should set to True to set scrambler init to 0's
 
     Returns:
         NDArray[uint8]: scrabled output input binary values stored in uint8 bytes array

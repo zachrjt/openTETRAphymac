@@ -19,15 +19,17 @@ testing.
 from abc import ABC, abstractmethod
 from typing import ClassVar, Literal
 from numpy import complex64, float64, uint8, zeros, mean, \
-    int64, concatenate, full, sqrt, zeros_like
+    int64, concatenate, full, sqrt, zeros_like, repeat, sin, cos, complex128
+from numpy.random import Generator, PCG64
 from numpy.typing import NDArray
+from scipy.signal import bessel, sosfilt
 
 from .tx_rx_utilities import power_ramping_float, \
     power_ramping_quantized, assert_tail_is_zero, oversample_data_quantized, oversample_data_float, \
     TX_HALFBAND1_FLOAT_COEFFICIENTS, TX_HALFBAND1_Q17_COEFFICIENTS, TX_HALFBAND2_FLOAT_COEFFICIENTS, \
     TX_HALFBAND2_Q17_COEFFICIENTS, TX_HALFBAND3_FLOAT_COEFFICIENTS, TX_HALFBAND3_Q17_COEFFICIENTS, \
     TX_LPF_FLOAT_COEFFICIENTS, TX_LPF_Q17_COEFFICIENTS, TX_RRC_FLOAT_COEFFICIENTS, TX_RRC_Q17_COEFFICIENTS, \
-    dsp_fir_i_q_stream_convolve
+    dsp_fir_i_q_stream_convolve, OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER, q17_rounding, NUMBER_OF_FRACTIONAL_BITS
 
 
 from .constants import SUBSLOT_BIT_LENGTH, TX_BB_SAMPLING_FACTOR
@@ -41,7 +43,7 @@ TETRA_SYMBOL_RATE = 18000                                           # The base E
 # The internal sw simulator sampling factor over the DAC rate
 TRANSMIT_SIMULATION_SAMPLING_FACTOR = 10
 # Internal sw simulator sampling rate, allows for capture of harmonics
-TRANSMIT_SIMULATION_SAMPLE_RATE = int(TETRA_SYMBOL_RATE * TETRA_SYMBOL_RATE * TX_BB_SAMPLING_FACTOR)
+TRANSMIT_SIMULATION_SAMPLE_RATE = int(TX_BB_SAMPLING_FACTOR * TETRA_SYMBOL_RATE * TRANSMIT_SIMULATION_SAMPLING_FACTOR)
 # Number of base sample rampe sames used to prepend and post bend burst data to clear FIR memory states
 BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT = 30
 
@@ -73,6 +75,23 @@ class RFTransmitter(ABC):
     halfband_2_filter_state: ClassVar[NDArray[int64 | float64]]
     halfband_3_filter_state: ClassVar[NDArray[int64 | float64]]
 
+    _error_generation_state = False
+    _genI_generator = Generator(PCG64())
+    _genQ_generator = Generator(PCG64())
+
+    i_ch_ofst_correction = float64(0)
+    q_ch_ofst_correction = float64(0)
+    i_ch_gain_correction = float64(1)
+    q_ch_gain_correction = float64(1)
+
+    _i_ch_offset_err = float64(0)
+    _q_ch_offset_err = float64(0)
+    _i_ch_gain_err = float64(0)
+    _q_ch_gain_err = float64(0)
+
+    _q_ch_phase_err = float(0.0174533)
+    _q_ch_phase_correction = float(0)
+
     def __init__(self):
         pass
 
@@ -86,14 +105,17 @@ class RFTransmitter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _dac_conversion(self) -> None:
+    def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
+                        ) -> tuple[NDArray[float64], NDArray[float64]]:
         """
         Base abstract method that converts baseband processed data into dac code representation,
         """
         raise NotImplementedError
 
     @abstractmethod
-    def _analog_reconstruction(self) -> None:
+    def _analog_reconstruction(self, i_ch: NDArray[float64],
+                               q_ch: NDArray[float64]
+                               ) -> NDArray[complex128]:
         """
         base abstract method that takes in DAC codes at rate Rs, converts to real floats with ZOH with
         sampling rate Rif which is x9 more than Rs, then filters with analog reconstruction filter.
@@ -232,8 +254,8 @@ class RFTransmitter(ABC):
 
     def transmit_burst(self, burst_bit_seq: NDArray[uint8], burst_ramp_periods: tuple[int, int],
                        subslot_2_burst_ramp_periods: tuple[int, int] | None = None,
-                       debug_return_stage: Literal["baseband"] | Literal["dac"] | Literal["tx"] = "baseband"
-                       ) -> tuple[NDArray[int64 | float64], NDArray[int64 | float64]]:
+                       debug_return_stage: Literal["baseband"] | Literal["dac"] | Literal["tx"] = "tx"
+                       ) -> tuple[NDArray[int64 | float64], NDArray[int64 | float64]] | NDArray[complex128]:
         """
         Performs the process of converting burst modulation bits into transmitted data, including baseband processing,
         DAC conversion, and analog reconstruction
@@ -291,12 +313,19 @@ class RFTransmitter(ABC):
             # 5. Pass modulated symbols and guard information to baseband processing function
             i_temp_ramp, q_temp_ramp = self._baseband_processing(input_symbol_complex_data, burst_ramp_periods)
 
-        # if debug_return_stage == VALID_RETURN_STAGE_VALUES[0]:
-        #     return i_temp_ramp, q_temp_ramp
+        if debug_return_stage == "baseband":
+            return i_temp_ramp, q_temp_ramp
 
-        return i_temp_ramp, q_temp_ramp
+        # 6. Convert to DAC representation
+        i_float, q_float = self._dac_conversion(i_temp_ramp, q_temp_ramp)
 
-        # 6. Convert to DAC representation and perform ZOH at higher sampling rate
+        if debug_return_stage == "dac":
+            return i_float, q_float
+        # 7. Create tx representation
+
+        rf_data = self._analog_reconstruction(i_float, q_float)
+
+        return rf_data
 
 
 ###################################################################################################
@@ -414,23 +443,89 @@ class RealTransmitter(RFTransmitter):
 
         return i_ramped_symbols, q_ramped_symbols
 
-    def _dac_conversion(self) -> None:
+    def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
+                        ) -> tuple[NDArray[float64], NDArray[float64]]:
         """
-        Converts baseband processed data into dac code representation with realistic dac non-linearity
+        Converts baseband processed data into float representation with realistic dac non-linearity
         """
-        raise NotImplementedError
+        # 1. Round Q17 data to 10bits for DAC
+        i_dac_bits = q17_rounding(i_ch.copy().astype(int64),
+                                  "rtz", NUMBER_OF_FRACTIONAL_BITS - (OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1))
+        q_dac_bits = q17_rounding(q_ch.copy().astype(int64),
+                                  "rtz", NUMBER_OF_FRACTIONAL_BITS - (OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1))
 
-    def _analog_reconstruction(self) -> None:
+        # 2. Convert to float64 values
+        i_float_data = i_dac_bits.astype(float64) / float(1 << 9)
+        q_float_data = q_dac_bits.astype(float64) / float(1 << 9)
+
+        # 3. Now we can add non-linearities which will be modelled as a uniform source as described by
+        #    10.1109/IC3I.2014.7019821 Taheri S. M, and Mohammadi B.
+        if not self._error_generation_state:
+            # Generate channel offset errors
+            self._i_ch_offset_err = self._genI_generator.uniform(-0.001, +0.001, 1)[0]
+            self._q_ch_offset_err = self._genQ_generator.uniform(-0.001, +0.001, 1)[0]
+            # Generate gain offset errors
+            self._i_ch_gain_err = self._genI_generator.uniform(-0.02, +0.02, 1)[0]
+            self._q_ch_gain_err = self._genQ_generator.uniform(-0.02, +0.02, 1)[0]
+
+        a = (0.1-0.06)/(2**OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER - 1) * 1
+        b = (0.1+0.06)/(2**OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER - 1) * 1
+
+        # Add INL-DNL error and channel offset error
+        i_float_data += self._genI_generator.uniform(a, b, len(i_float_data))
+        i_float_data += self._i_ch_offset_err
+
+        q_float_data += self._genI_generator.uniform(a, b, len(q_float_data))
+        q_float_data += self._q_ch_offset_err
+
+        # # Add gain error (from DAC and resistor mismatch)
+        i_float_data += self._i_ch_gain_err*i_float_data
+        q_float_data += self._q_ch_gain_err*q_float_data
+
+        # Add crosstalk between channels
+        q_copy = q_float_data.copy() * (10 ** (-95/10))
+        q_float_data += (i_float_data.copy()) * (10 ** (-95/10))
+        i_float_data += q_copy
+
+        # Apply offset and gain corrections done in mixer and/or DAC
+        i_float_data += self.i_ch_ofst_correction
+        i_float_data *= self.i_ch_gain_correction
+        q_float_data += self.q_ch_ofst_correction
+        q_float_data *= self.q_ch_gain_correction
+
+        return i_float_data, q_float_data
+
+    def _analog_reconstruction(self, i_ch: NDArray[float64],
+                               q_ch: NDArray[float64]
+                               ) -> NDArray[complex128]:
         """
         Takes in DAC codes at rate Rs, converts to real floats with ZOH with
         sampling rate Rif which is x8 more than Rs, then filters with analog reconstruction filter.
 
-        Models I, Q channel gain and offset errors, coupling, phase noise and LO leakage
+        Then converts I and Q channels to real data modeling phase error in quadrature modulation
         """
-        # coupling
-        # gain error
-        # offset
-        raise NotImplementedError
+        # 1. ZOH at TRANSMIT_SIMULATION_SAMPLING_FACTOR to the simulation sample rate
+        i_float_data = repeat(i_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
+        q_float_data = repeat(q_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
+
+        # 2. Perform analog reconstruction filtering
+        # First Generate bessel function coefficents
+        sos = bessel(9, 100E3, btype='lowpass', analog=False,
+                     fs=float(TRANSMIT_SIMULATION_SAMPLE_RATE), output="sos")
+        # Apply filtering to each channel individually
+        analog_i = sosfilt(sos, i_float_data)
+        analog_q = sosfilt(sos, q_float_data)
+
+        # TODO: Add phase noise simulation
+
+        # 3. Apply phase error
+        analog_i = analog_i - analog_q*sin(self._q_ch_phase_err)
+        analog_q = analog_q*cos(self._q_ch_phase_err)
+
+        rf_signal = zeros_like(analog_i, dtype=complex128)
+        rf_signal = (analog_i + 1j*analog_q).astype(complex128)
+
+        return rf_signal
 
 ###################################################################################################
 
@@ -538,21 +633,47 @@ class IdealTransmitter(RFTransmitter):
         i_ramped_symbols, q_ramped_symbols = power_ramping_float(stage_9_symbols[0], stage_9_symbols[1],
                                                                  burst_ramp_periods)
         mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
-        print("Post ramping ", "peakFS: ", mag.max()/(1 << 17), "rmsFS: ", sqrt(mean(mag**2))/(1 << 17))
+        print("Post ramping ", "peakFS: ", mag.max(), "rmsFS: ", sqrt(mean(mag**2)))
 
         return i_ramped_symbols, q_ramped_symbols
 
-    def _dac_conversion(self) -> None:
+    def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
+                        ) -> tuple[NDArray[float64], NDArray[float64]]:
         """
         Converts baseband processed data into dac code representation, does not model DAC non linearities however.
         """
-        raise NotImplementedError
+        # 1. We have no errors in te ideal form
+        i_float_data = i_ch.copy().astype(float64)
+        q_float_data = q_ch.copy().astype(float64)
 
-    def _analog_reconstruction(self) -> None:
+        return i_float_data, q_float_data
+
+    def _analog_reconstruction(self, i_ch: NDArray[float64],
+                               q_ch: NDArray[float64]
+                               ) -> NDArray[complex128]:
         """
         Takes in DAC codes at rate Rs, converts to real floats with ZOH with
         sampling rate Rif which is x8 more than Rs, then filters with analog reconstruction filter.
 
         Does not model gain or offset errors, coupling, phase noise or LO leakage
         """
-        raise NotImplementedError
+        # 1. ZOH at TRANSMIT_SIMULATION_SAMPLING_FACTOR to the simulation sample rate
+        i_float_data = repeat(i_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
+        q_float_data = repeat(q_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
+
+        # 2. Perform analog reconstruction filtering
+        # First Generate bessel function coefficents
+        sos = bessel(9, 100E3, btype='lowpass', analog=False,
+                     fs=float(TRANSMIT_SIMULATION_SAMPLE_RATE), output="sos")
+        # Apply filtering to each channel individually
+        analog_i = sosfilt(sos, i_float_data)
+        analog_q = sosfilt(sos, q_float_data)
+
+        # TODO: Add phase noise simulation
+
+        # 3. Convert to complex signal
+
+        rf_signal = zeros_like(analog_i, dtype=complex128)
+        rf_signal[:] = (analog_i + 1j*analog_q).astype(complex128)
+
+        return rf_signal

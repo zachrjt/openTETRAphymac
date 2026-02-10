@@ -104,7 +104,7 @@ def dqpsk_modulator(input_data: NDArray[uint8],
     # This prevents phase discontinuity
 
     # reshape to have even and odd bits [b0, b1]
-    useful_burst_seg = input_data[(n_start * 2): input_data.size - (n_end * 2)]
+    useful_burst_seg = input_data[(n_start * 2): input_data.size - (n_end * 2)].copy()
     bit_pairs = useful_burst_seg.reshape(-1, 2)
 
     # map the even odd bits into a 4-entry code to map phase transistion quickly from LUT
