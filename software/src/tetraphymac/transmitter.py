@@ -444,6 +444,7 @@ class RealTransmitter(RFTransmitter):
         if burst_ramp_periods[1] != 0:
             stage_9_symbols = stage_9_symbols[:, :-full_pad_length].copy()
 
+        # TODO: Add runtime assertion if we go out of Fullscale for Q17
         # 9. Perform ramping on signal
         i_ramped_symbols, q_ramped_symbols = power_ramping_quantized(stage_9_symbols[0], stage_9_symbols[1],
                                                                      burst_ramp_periods)
