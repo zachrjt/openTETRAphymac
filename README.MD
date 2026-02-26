@@ -24,13 +24,13 @@ System level design of the Rx portion of the RF front end is underway as is the 
 3. Design an RF test board for ALC/AGC design, testing of wideband lossy coupler, and for VNA coplanar waveguide impedance verification for PCB stackup
 
 ## Software
-Software development of a python TETRA V1.0 emulator is well underway, and approximately 50% complete. The following has been accomplished, and is further detailed in the `/software` directory:
+Software development of a python TETRA V1.0 emulator is well underway. The following has been accomplished, and is further detailed in the `/software` directory:
 1. Complete Lower MAC layer implementation
-2. Complete TDMA burst construction using logical channels
-3. Complete Q17 fixed point IQ tx generation
+2. Complete TDMA burst construction and validation, simulation of ideal and real quantized transmitters with impairments
+3. Ability to save and read .iq files to replay on an SDR
 
 ### Short Term Software Goals
 1. Complete baseband sampling, filtering, and power ramping to generate burst I,Q waveforms for PlutoSDR _(COMPLETE)_
-2. Transmitter analog filtering, DAZ ZOH, and noise as well 
-3. Receiver synchronization, sampling, filtering and BER/MER simulations
+2. Transmitter analog filtering, DAZ ZOH, and noise as well _(COMPLETE)_
+3. Receiver synchronization, sampling, filtering and BER/MER simulations _(in progress)_
 4. Work on Upper MAC layer and LLC, to utilize logical channels and fill them with actual data _(upper MAC is less of a priority than hw design)_
