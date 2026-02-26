@@ -17,17 +17,19 @@ IdealTransmitter is designed to generate ideal transmit bursts for testing rcvr 
 testing.
 """
 from abc import ABC, abstractmethod
-from typing import ClassVar, Literal
-from numpy import complex64, float64, uint8, zeros, mean, \
-    int64, concatenate, full, sqrt, zeros_like
+from typing import Literal
+from numpy import complex64, float64, uint8, zeros, \
+    int64, concatenate, full, zeros_like, repeat, sin, cos, complex128, pad
+from numpy.random import Generator, PCG64
 from numpy.typing import NDArray
+from scipy.signal import bessel, sosfilt, sosfilt_zi
 
 from .tx_rx_utilities import power_ramping_float, \
     power_ramping_quantized, assert_tail_is_zero, oversample_data_quantized, oversample_data_float, \
     TX_HALFBAND1_FLOAT_COEFFICIENTS, TX_HALFBAND1_Q17_COEFFICIENTS, TX_HALFBAND2_FLOAT_COEFFICIENTS, \
     TX_HALFBAND2_Q17_COEFFICIENTS, TX_HALFBAND3_FLOAT_COEFFICIENTS, TX_HALFBAND3_Q17_COEFFICIENTS, \
     TX_LPF_FLOAT_COEFFICIENTS, TX_LPF_Q17_COEFFICIENTS, TX_RRC_FLOAT_COEFFICIENTS, TX_RRC_Q17_COEFFICIENTS, \
-    dsp_fir_i_q_stream_convolve
+    dsp_fir_i_q_stream_convolve, OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER, q17_rounding, NUMBER_OF_FRACTIONAL_BITS
 
 
 from .constants import SUBSLOT_BIT_LENGTH, TX_BB_SAMPLING_FACTOR
@@ -41,9 +43,13 @@ TETRA_SYMBOL_RATE = 18000                                           # The base E
 # The internal sw simulator sampling factor over the DAC rate
 TRANSMIT_SIMULATION_SAMPLING_FACTOR = 10
 # Internal sw simulator sampling rate, allows for capture of harmonics
-TRANSMIT_SIMULATION_SAMPLE_RATE = int(TETRA_SYMBOL_RATE * TETRA_SYMBOL_RATE * TX_BB_SAMPLING_FACTOR)
+TRANSMIT_SIMULATION_SAMPLE_RATE = int(TX_BB_SAMPLING_FACTOR * TETRA_SYMBOL_RATE * TRANSMIT_SIMULATION_SAMPLING_FACTOR)
 # Number of base sample rampe sames used to prepend and post bend burst data to clear FIR memory states
 BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT = 30
+# Group delay of the tx digital processing filters used
+TX_FILTER_GROUP_DELAY_AT_64SPS = 981
+# Group delay of the analog processing in band for the tx chain
+TX_ANALOG_GROUP_DELAY_AT_640SPS = 127
 
 ###################################################################################################
 
@@ -65,16 +71,54 @@ class RFTransmitter(ABC):
     between abstract methods.
     """
 
-    phase_reference = complex64(1 + 0j)
+    phase_reference: complex64
 
-    rrc_filter_state: ClassVar[NDArray[int64 | float64]]
-    lpf_filter_state: ClassVar[NDArray[int64 | float64]]
-    halfband_1_filter_state: ClassVar[NDArray[int64 | float64]]
-    halfband_2_filter_state: ClassVar[NDArray[int64 | float64]]
-    halfband_3_filter_state: ClassVar[NDArray[int64 | float64]]
+    rrc_filter_state: NDArray[int64 | float64]
+    lpf_filter_state: NDArray[int64 | float64]
+    halfband_1_filter_state: NDArray[int64 | float64]
+    halfband_2_filter_state: NDArray[int64 | float64]
+    halfband_3_filter_state: NDArray[int64 | float64]
+
+    _error_generation_state: bool
+    _genI_generator: Generator
+    _genQ_generator: Generator
+
+    i_ch_ofst_correction: float64
+    q_ch_ofst_correction: float64
+    i_ch_gain_correction: float64
+    q_ch_gain_correction: float64
+
+    _i_ch_offset_err: float64
+    _q_ch_offset_err: float64
+    _i_ch_gain_err: float64
+    _q_ch_gain_err: float64
+
+    _q_ch_phase_err: float
+    _q_ch_phase_correction: float
+
+    _q_bessel_state: NDArray[float64]
+    _i_bessel_state: NDArray[float64]
+
+    sos = bessel(9, 100E3, btype='lowpass', analog=False, fs=float(TRANSMIT_SIMULATION_SAMPLE_RATE), output="sos")
 
     def __init__(self):
-        pass
+        self.phase_reference = complex64(1 + 0j)
+        self._error_generation_state = False
+        self._genI_generator = Generator(PCG64())
+        self._genQ_generator = Generator(PCG64())
+
+        self.i_ch_ofst_correction = float64(0)
+        self.q_ch_ofst_correction = float64(0)
+        self.i_ch_gain_correction = float64(1)
+        self.q_ch_gain_correction = float64(1)
+
+        self._i_ch_offset_err = float64(0)
+        self._q_ch_offset_err = float64(0)
+        self._i_ch_gain_err = float64(0)
+        self._q_ch_gain_err = float64(0)
+
+        self._q_ch_phase_err = float(0.0174533)
+        self._q_ch_phase_correction = float(0)
 
     @abstractmethod
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
@@ -86,14 +130,18 @@ class RFTransmitter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _dac_conversion(self) -> None:
+    def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
+                        ) -> tuple[NDArray[float64], NDArray[float64]]:
         """
         Base abstract method that converts baseband processed data into dac code representation,
         """
         raise NotImplementedError
 
     @abstractmethod
-    def _analog_reconstruction(self) -> None:
+    def _analog_reconstruction(self, i_ch: NDArray[float64],
+                               q_ch: NDArray[float64],
+                               burst_ramp_periods: tuple[int, int]
+                               ) -> NDArray[complex128]:
         """
         base abstract method that takes in DAC codes at rate Rs, converts to real floats with ZOH with
         sampling rate Rif which is x9 more than Rs, then filters with analog reconstruction filter.
@@ -232,8 +280,8 @@ class RFTransmitter(ABC):
 
     def transmit_burst(self, burst_bit_seq: NDArray[uint8], burst_ramp_periods: tuple[int, int],
                        subslot_2_burst_ramp_periods: tuple[int, int] | None = None,
-                       debug_return_stage: Literal["baseband"] | Literal["dac"] | Literal["tx"] = "baseband"
-                       ) -> tuple[NDArray[int64 | float64], NDArray[int64 | float64]]:
+                       debug_return_stage: Literal["baseband"] | Literal["dac"] | Literal["tx"] = "tx"
+                       ) -> tuple[NDArray[int64 | float64], NDArray[int64 | float64]] | NDArray[complex128]:
         """
         Performs the process of converting burst modulation bits into transmitted data, including baseband processing,
         DAC conversion, and analog reconstruction
@@ -291,12 +339,19 @@ class RFTransmitter(ABC):
             # 5. Pass modulated symbols and guard information to baseband processing function
             i_temp_ramp, q_temp_ramp = self._baseband_processing(input_symbol_complex_data, burst_ramp_periods)
 
-        # if debug_return_stage == VALID_RETURN_STAGE_VALUES[0]:
-        #     return i_temp_ramp, q_temp_ramp
+        if debug_return_stage == "baseband":
+            return i_temp_ramp, q_temp_ramp
 
-        return i_temp_ramp, q_temp_ramp
+        # 6. Convert to DAC representation
+        i_float, q_float = self._dac_conversion(i_temp_ramp, q_temp_ramp)
 
-        # 6. Convert to DAC representation and perform ZOH at higher sampling rate
+        if debug_return_stage == "dac":
+            return i_float, q_float
+        # 7. Create tx representation
+
+        rf_data = self._analog_reconstruction(i_float, q_float, burst_ramp_periods)
+
+        return rf_data
 
 
 ###################################################################################################
@@ -309,11 +364,16 @@ class RealTransmitter(RFTransmitter):
     modulator LO.
     """
 
-    rrc_filter_state = zeros(shape=(2, len(TX_RRC_Q17_COEFFICIENTS)-1), dtype=int64)
-    lpf_filter_state = zeros(shape=(2, len(TX_LPF_Q17_COEFFICIENTS)-1), dtype=int64)
-    halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_Q17_COEFFICIENTS)-1), dtype=int64)
-    halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_Q17_COEFFICIENTS)-1), dtype=int64)
-    halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_Q17_COEFFICIENTS)-1), dtype=int64)
+    def __init__(self):
+        super().__init__()
+        self.rrc_filter_state = zeros(shape=(2, len(TX_RRC_Q17_COEFFICIENTS)-1), dtype=int64)
+        self.lpf_filter_state = zeros(shape=(2, len(TX_LPF_Q17_COEFFICIENTS)-1), dtype=int64)
+        self.halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_Q17_COEFFICIENTS)-1), dtype=int64)
+        self.halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_Q17_COEFFICIENTS)-1), dtype=int64)
+        self.halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_Q17_COEFFICIENTS)-1), dtype=int64)
+
+        self._q_bessel_state = zeros(shape=0, dtype=float64)
+        self._i_bessel_state = zeros(shape=0, dtype=float64)
 
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
                              burst_ramp_periods: tuple[int, int]) -> tuple[NDArray[int64], NDArray[int64]]:
@@ -329,15 +389,15 @@ class RealTransmitter(RFTransmitter):
         :rtype: tuple[NDArray[int64], NDArray[int64]]
         """
         # 1. Determine if prepending and/or postpending zeros to flush is required
-        start_offset = 0
-        end_offset = 0
+        # start_offset = 0
+        # end_offset = 0
         # 1a. continuous with previous burst consideration:
         if burst_ramp_periods[0] != 0:
             # Since we ramp up, we are not continuous with previous data, and must flush the FIRs with prepended zeros
             insulated_input_data = concatenate((full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64),
                                                symbol_complex_data))
-            start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
+            # start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
         else:
             insulated_input_data = symbol_complex_data.copy()
@@ -348,14 +408,14 @@ class RealTransmitter(RFTransmitter):
             # should flush data with postpended zeros
             insulated_input_data = concatenate((insulated_input_data, full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64)))
-            end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
+            # end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
-        mag = sqrt(insulated_input_data.real[(start_offset):
-                                             len(insulated_input_data.real)-(end_offset)].astype(float64)**2
-                   + insulated_input_data.imag[(start_offset):
-                                               len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
+        # mag = sqrt(insulated_input_data.real[(start_offset):
+        #                                      len(insulated_input_data.real)-(end_offset)].astype(float64)**2
+        #            + insulated_input_data.imag[(start_offset):
+        #                                        len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
 
-        print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
+        # print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
 
         # 2. Upsample by x8 with zero insertions, and quantize data to Q1.17 fixed format stored in int64
         stage_1_symbols = oversample_data_quantized(insulated_input_data, 8)
@@ -401,36 +461,132 @@ class RealTransmitter(RFTransmitter):
 
         # 8. Extract useful part of burst
         full_pad_length = int(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*TX_BB_SAMPLING_FACTOR)
-        if burst_ramp_periods[0] != 0:
-            stage_9_symbols = stage_9_symbols[:, full_pad_length:].copy()
-        if burst_ramp_periods[1] != 0:
-            stage_9_symbols = stage_9_symbols[:, :-full_pad_length].copy()
+        adjust_len = (full_pad_length + TX_FILTER_GROUP_DELAY_AT_64SPS)
 
+        if burst_ramp_periods[0] != 0 and burst_ramp_periods[1] != 0:
+            # for isolated bursts we can handle removing group delay at this level
+            stage_9_symbols = stage_9_symbols[:, adjust_len:-adjust_len].copy()
+        else:
+            # For non isolated bursts we either throw away at the start or end
+            if burst_ramp_periods[0] != 0:
+                stage_9_symbols = stage_9_symbols[:, adjust_len:].copy()
+            if burst_ramp_periods[1] != 0:
+                stage_9_symbols = stage_9_symbols[:, :-adjust_len].copy()
+
+        # TODO: Add runtime assertion if we go out of Fullscale for Q17
         # 9. Perform ramping on signal
         i_ramped_symbols, q_ramped_symbols = power_ramping_quantized(stage_9_symbols[0], stage_9_symbols[1],
                                                                      burst_ramp_periods)
-        mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
-        print("Post ramping ", "peakFS: ", mag.max()/(1 << 17), "rmsFS: ", sqrt(mean(mag**2))/(1 << 17))
+        # mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
+        # print("Post ramping ", "peakFS: ", mag.max()/(1 << 17), "rmsFS: ", sqrt(mean(mag**2))/(1 << 17))
 
         return i_ramped_symbols, q_ramped_symbols
 
-    def _dac_conversion(self) -> None:
+    def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
+                        ) -> tuple[NDArray[float64], NDArray[float64]]:
         """
-        Converts baseband processed data into dac code representation with realistic dac non-linearity
+        Converts baseband processed data into float representation with realistic dac non-linearity
         """
-        raise NotImplementedError
+        # 1. Round Q17 data to 10bits for DAC
+        i_dac_bits = q17_rounding(i_ch.copy().astype(int64),
+                                  "rti", NUMBER_OF_FRACTIONAL_BITS - (OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1))
+        q_dac_bits = q17_rounding(q_ch.copy().astype(int64),
+                                  "rti", NUMBER_OF_FRACTIONAL_BITS - (OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1))
 
-    def _analog_reconstruction(self) -> None:
+        # 2. Convert to float64 values
+        i_float_data = i_dac_bits.astype(float64) / float(1 << 9)
+        q_float_data = q_dac_bits.astype(float64) / float(1 << 9)
+
+        # 3. Now we can add non-linearities which will be modelled as a uniform source as described by
+        #    10.1109/IC3I.2014.7019821 Taheri S. M, and Mohammadi B.
+        if not self._error_generation_state:
+            # Generate channel offset errors
+            self._i_ch_offset_err = self._genI_generator.uniform(-0.001, +0.001, 1)[0]
+            self._q_ch_offset_err = self._genQ_generator.uniform(-0.001, +0.001, 1)[0]
+            # Generate gain offset errors
+            self._i_ch_gain_err = self._genI_generator.uniform(-0.02, +0.02, 1)[0]
+            self._q_ch_gain_err = self._genQ_generator.uniform(-0.02, +0.02, 1)[0]
+
+        a = (0.1-0.06)/(2**OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER - 1) * 1
+        b = (0.1+0.06)/(2**OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER - 1) * 1
+
+        # Add INL-DNL error and channel offset error
+        i_float_data += self._genI_generator.uniform(a, b, len(i_float_data))
+        i_float_data += self._i_ch_offset_err
+
+        q_float_data += self._genI_generator.uniform(a, b, len(q_float_data))
+        q_float_data += self._q_ch_offset_err
+
+        # # Add gain error (from DAC and resistor mismatch)
+        i_float_data += self._i_ch_gain_err*i_float_data
+        q_float_data += self._q_ch_gain_err*q_float_data
+
+        # Add crosstalk between channels
+        q_copy = q_float_data.copy() * (10 ** (-95/10))
+        q_float_data += (i_float_data.copy()) * (10 ** (-95/10))
+        i_float_data += q_copy
+
+        # Apply offset and gain corrections done in mixer and/or DAC
+        i_float_data += self.i_ch_ofst_correction
+        i_float_data *= self.i_ch_gain_correction
+        q_float_data += self.q_ch_ofst_correction
+        q_float_data *= self.q_ch_gain_correction
+
+        return i_float_data, q_float_data
+
+    def _analog_reconstruction(self, i_ch: NDArray[float64],
+                               q_ch: NDArray[float64],
+                               burst_ramp_periods: tuple[int, int]
+                               ) -> NDArray[complex128]:
         """
         Takes in DAC codes at rate Rs, converts to real floats with ZOH with
         sampling rate Rif which is x8 more than Rs, then filters with analog reconstruction filter.
 
-        Models I, Q channel gain and offset errors, coupling, phase noise and LO leakage
+        Then converts I and Q channels to real data modeling phase error in quadrature modulation
         """
-        # coupling
-        # gain error
-        # offset
-        raise NotImplementedError
+        # 1. ZOH at TRANSMIT_SIMULATION_SAMPLING_FACTOR to the simulation sample rate
+        i_float_data = repeat(i_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
+        q_float_data = repeat(q_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
+
+        # 2. Perform analog reconstruction filtering
+        # Apply filtering to each channel individually
+        if self._i_bessel_state.size == 0:
+            self._i_bessel_state = sosfilt_zi(self.sos) * i_float_data[0]
+            self._q_bessel_state = sosfilt_zi(self.sos) * q_float_data[0]
+
+        # If we are not continuous with previous burst then we can pre-pend a pad
+        # If we are not continuous with subsequent burst then we can post-pend a pad
+        # Pad lengths are just set to 10 symbols
+        pad_len = 10 * TRANSMIT_SIMULATION_SAMPLING_FACTOR * TX_BB_SAMPLING_FACTOR
+        pads = (0 if burst_ramp_periods[0] == 0 else pad_len, 0 if burst_ramp_periods[1] == 0 else pad_len)
+        i_float_data = pad(i_float_data, pads, 'constant', constant_values=(i_float_data[0], i_float_data[-1]))
+        q_float_data = pad(q_float_data, pads, 'constant', constant_values=(q_float_data[0], q_float_data[-1]))
+
+        analog_i, self._i_bessel_state = sosfilt(self.sos, i_float_data, zi=self._i_bessel_state)
+        analog_q, self._q_bessel_state = sosfilt(self.sos, q_float_data, zi=self._q_bessel_state)
+
+        # Discard padding
+        start = pads[0]
+        if pads[0] != 0:
+            start += TX_ANALOG_GROUP_DELAY_AT_640SPS
+        if pads[1] == 0:
+            stop = None
+        else:
+            stop = -(pads[1] + TX_ANALOG_GROUP_DELAY_AT_640SPS)
+
+        analog_i = analog_i[start:stop]
+        analog_q = analog_q[start:stop]
+
+        # TODO: Add phase noise simulation
+
+        # 3. Apply phase error
+        analog_i = analog_i - analog_q*sin(self._q_ch_phase_err)
+        analog_q = analog_q*cos(self._q_ch_phase_err)
+
+        rf_signal = zeros_like(analog_i, dtype=complex128)
+        rf_signal = (analog_i + 1j*analog_q).astype(complex128)
+
+        return rf_signal
 
 ###################################################################################################
 
@@ -442,11 +598,16 @@ class IdealTransmitter(RFTransmitter):
     data asides from AWGN noise. However, still uses the same order of filters as its' RealTransmitter alternative
     """
 
-    rrc_filter_state = zeros(shape=(2, len(TX_RRC_FLOAT_COEFFICIENTS)-1), dtype=float64)
-    lpf_filter_state = zeros(shape=(2, len(TX_LPF_FLOAT_COEFFICIENTS)-1), dtype=float64)
-    halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_FLOAT_COEFFICIENTS)-1), dtype=float64)
-    halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_FLOAT_COEFFICIENTS)-1), dtype=float64)
-    halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_FLOAT_COEFFICIENTS)-1), dtype=float64)
+    def __init__(self):
+        super().__init__()
+        self.rrc_filter_state = zeros(shape=(2, len(TX_RRC_FLOAT_COEFFICIENTS)-1), dtype=float64)
+        self.lpf_filter_state = zeros(shape=(2, len(TX_LPF_FLOAT_COEFFICIENTS)-1), dtype=float64)
+        self.halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_FLOAT_COEFFICIENTS)-1), dtype=float64)
+        self.halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_FLOAT_COEFFICIENTS)-1), dtype=float64)
+        self.halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_FLOAT_COEFFICIENTS)-1), dtype=float64)
+
+        self._q_bessel_state = zeros(shape=0, dtype=float64)
+        self._i_bessel_state = zeros(shape=0, dtype=float64)
 
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
                              burst_ramp_periods: tuple[int, int]) -> tuple[NDArray[float64], NDArray[float64]]:
@@ -457,15 +618,15 @@ class IdealTransmitter(RFTransmitter):
 
         # 1a. continuous with previous burst consideration:
         # 1. Determine if prepending and/or postpending zeros to flush is required
-        start_offset = 0
-        end_offset = 0
+        # start_offset = 0
+        # end_offset = 0
         # 1a. continuous with previous burst consideration:
         if burst_ramp_periods[0] != 0:
             # Since we ramp up, we are not continuous with previous data, and must flush the FIRs with prepended zeros
             insulated_input_data = concatenate((full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64),
                                                symbol_complex_data))
-            start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
+            # start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
         else:
             insulated_input_data = symbol_complex_data.copy()
@@ -476,14 +637,14 @@ class IdealTransmitter(RFTransmitter):
             # should flush data with postpended zeros
             insulated_input_data = concatenate((insulated_input_data, full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64)))
-            end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
+            # end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
-        mag = sqrt(insulated_input_data.real[(start_offset):
-                                             len(insulated_input_data.real)-(end_offset)].astype(float64)**2
-                   + insulated_input_data.imag[(start_offset):
-                                               len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
+        # mag = sqrt(insulated_input_data.real[(start_offset):
+        #                                      len(insulated_input_data.real)-(end_offset)].astype(float64)**2
+        #            + insulated_input_data.imag[(start_offset):
+        #                                        len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
 
-        print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
+        # print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
 
         # 2. Upsample by x8 with zero insertions, and quantize data to Q1.17 fixed format stored in float64
         stage_1_symbols = oversample_data_float(insulated_input_data, 8)
@@ -529,30 +690,84 @@ class IdealTransmitter(RFTransmitter):
 
         # 8. Extract useful part of burst
         full_pad_length = int(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*TX_BB_SAMPLING_FACTOR)
-        if burst_ramp_periods[0] != 0:
-            stage_9_symbols = stage_9_symbols[:, full_pad_length:].copy()
-        if burst_ramp_periods[1] != 0:
-            stage_9_symbols = stage_9_symbols[:, :-full_pad_length].copy()
+        adjust_len = (full_pad_length + TX_FILTER_GROUP_DELAY_AT_64SPS)
+
+        if burst_ramp_periods[0] != 0 and burst_ramp_periods[1] != 0:
+            # for isolated bursts we can handle removing group delay at this level
+            stage_9_symbols = stage_9_symbols[:, adjust_len:-adjust_len].copy()
+        else:
+            # For non isolated bursts we either throw away at the start or end
+            if burst_ramp_periods[0] != 0:
+                stage_9_symbols = stage_9_symbols[:, adjust_len:].copy()
+            if burst_ramp_periods[1] != 0:
+                stage_9_symbols = stage_9_symbols[:, :-adjust_len].copy()
 
         # 9. Perform ramping on signal
         i_ramped_symbols, q_ramped_symbols = power_ramping_float(stage_9_symbols[0], stage_9_symbols[1],
                                                                  burst_ramp_periods)
-        mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
-        print("Post ramping ", "peakFS: ", mag.max()/(1 << 17), "rmsFS: ", sqrt(mean(mag**2))/(1 << 17))
+        # mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
+        # print("Post ramping ", "peakFS: ", mag.max(), "rmsFS: ", sqrt(mean(mag**2)))
 
         return i_ramped_symbols, q_ramped_symbols
 
-    def _dac_conversion(self) -> None:
+    def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
+                        ) -> tuple[NDArray[float64], NDArray[float64]]:
         """
         Converts baseband processed data into dac code representation, does not model DAC non linearities however.
         """
-        raise NotImplementedError
+        # 1. We have no errors in te ideal form
+        i_float_data = i_ch.copy().astype(float64)
+        q_float_data = q_ch.copy().astype(float64)
 
-    def _analog_reconstruction(self) -> None:
+        return i_float_data, q_float_data
+
+    def _analog_reconstruction(self, i_ch: NDArray[float64],
+                               q_ch: NDArray[float64],
+                               burst_ramp_periods: tuple[int, int]
+                               ) -> NDArray[complex128]:
         """
         Takes in DAC codes at rate Rs, converts to real floats with ZOH with
         sampling rate Rif which is x8 more than Rs, then filters with analog reconstruction filter.
 
         Does not model gain or offset errors, coupling, phase noise or LO leakage
         """
-        raise NotImplementedError
+        # 1. ZOH at TRANSMIT_SIMULATION_SAMPLING_FACTOR to the simulation sample rate
+        i_float_data = repeat(i_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
+        q_float_data = repeat(q_ch, TRANSMIT_SIMULATION_SAMPLING_FACTOR)
+
+        # 2. Perform analog reconstruction filtering
+        # Apply filtering to each channel individually
+        if self._i_bessel_state.size == 0:
+            self._i_bessel_state = sosfilt_zi(self.sos) * i_float_data[0]
+            self._q_bessel_state = sosfilt_zi(self.sos) * q_float_data[0]
+
+        # If we are not continuous with previous burst then we can pre-pend a pad
+        # If we are not continuous with subsequent burst then we can post-pend a pad
+        # The reason for adding pads is simply that a real analog filter would run between and after a non-continuous
+        # burst
+        # Pad lengths are just set to 10 symbols
+        pad_len = 10 * TRANSMIT_SIMULATION_SAMPLING_FACTOR * TX_BB_SAMPLING_FACTOR
+        pads = (0 if burst_ramp_periods[0] == 0 else pad_len, 0 if burst_ramp_periods[1] == 0 else pad_len)
+        i_float_data = pad(i_float_data, pads, 'constant', constant_values=(i_float_data[0], i_float_data[-1]))
+        q_float_data = pad(q_float_data, pads, 'constant', constant_values=(q_float_data[0], q_float_data[-1]))
+
+        analog_i, self._i_bessel_state = sosfilt(self.sos, i_float_data, zi=self._i_bessel_state)
+        analog_q, self._q_bessel_state = sosfilt(self.sos, q_float_data, zi=self._q_bessel_state)
+
+        # Discard padding
+        start = pads[0]
+        if pads[0] != 0:
+            start += TX_ANALOG_GROUP_DELAY_AT_640SPS
+        if pads[1] == 0:
+            stop = None
+        else:
+            stop = -(pads[1] + TX_ANALOG_GROUP_DELAY_AT_640SPS)
+
+        analog_i = analog_i[start:stop]
+        analog_q = analog_q[start:stop]
+        # 3. Convert to complex signal
+
+        rf_signal = zeros_like(analog_i, dtype=complex128)
+        rf_signal[:] = (analog_i + 1j*analog_q).astype(complex128)
+
+        return rf_signal
