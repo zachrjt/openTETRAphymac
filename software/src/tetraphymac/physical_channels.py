@@ -621,7 +621,7 @@ class NormalDiscontDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
         # must add guard period training sequence if there is no ramping at the end
         if ramp_up_down_state[1]:
             burst_bit_seq[492+d:510] = zeros(shape=self.end_guard_bit_period, dtype=uint8)
-            self.end_ramp_period = TIMESLOT_BIT_LENGTH - 492+d
+            self.end_ramp_period = TIMESLOT_BIT_LENGTH - (492+d)
         else:
             # add following bits per 9.4.5.2
             burst_bit_seq[492+d:510] = NORMAL_TRAINING_SEQUENCE[2][2:10]

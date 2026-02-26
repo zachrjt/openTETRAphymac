@@ -17,9 +17,9 @@ IdealTransmitter is designed to generate ideal transmit bursts for testing rcvr 
 testing.
 """
 from abc import ABC, abstractmethod
-from typing import ClassVar, Literal
-from numpy import complex64, float64, uint8, zeros, mean, \
-    int64, concatenate, full, sqrt, zeros_like, repeat, sin, cos, complex128, pad
+from typing import Literal
+from numpy import complex64, float64, uint8, zeros, \
+    int64, concatenate, full, zeros_like, repeat, sin, cos, complex128, pad
 from numpy.random import Generator, PCG64
 from numpy.typing import NDArray
 from scipy.signal import bessel, sosfilt, sosfilt_zi
@@ -46,6 +46,10 @@ TRANSMIT_SIMULATION_SAMPLING_FACTOR = 10
 TRANSMIT_SIMULATION_SAMPLE_RATE = int(TX_BB_SAMPLING_FACTOR * TETRA_SYMBOL_RATE * TRANSMIT_SIMULATION_SAMPLING_FACTOR)
 # Number of base sample rampe sames used to prepend and post bend burst data to clear FIR memory states
 BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT = 30
+# Group delay of the tx digital processing filters used
+TX_FILTER_GROUP_DELAY_AT_64SPS = 981
+# Group delay of the analog processing in band for the tx chain
+TX_ANALOG_GROUP_DELAY_AT_640SPS = 127
 
 ###################################################################################################
 
@@ -67,30 +71,30 @@ class RFTransmitter(ABC):
     between abstract methods.
     """
 
-    phase_reference = complex64(1 + 0j)
+    phase_reference: complex64
 
-    rrc_filter_state: ClassVar[NDArray[int64 | float64]]
-    lpf_filter_state: ClassVar[NDArray[int64 | float64]]
-    halfband_1_filter_state: ClassVar[NDArray[int64 | float64]]
-    halfband_2_filter_state: ClassVar[NDArray[int64 | float64]]
-    halfband_3_filter_state: ClassVar[NDArray[int64 | float64]]
+    rrc_filter_state: NDArray[int64 | float64]
+    lpf_filter_state: NDArray[int64 | float64]
+    halfband_1_filter_state: NDArray[int64 | float64]
+    halfband_2_filter_state: NDArray[int64 | float64]
+    halfband_3_filter_state: NDArray[int64 | float64]
 
-    _error_generation_state = False
-    _genI_generator = Generator(PCG64())
-    _genQ_generator = Generator(PCG64())
+    _error_generation_state: bool
+    _genI_generator: Generator
+    _genQ_generator: Generator
 
-    i_ch_ofst_correction = float64(0)
-    q_ch_ofst_correction = float64(0)
-    i_ch_gain_correction = float64(1)
-    q_ch_gain_correction = float64(1)
+    i_ch_ofst_correction: float64
+    q_ch_ofst_correction: float64
+    i_ch_gain_correction: float64
+    q_ch_gain_correction: float64
 
-    _i_ch_offset_err = float64(0)
-    _q_ch_offset_err = float64(0)
-    _i_ch_gain_err = float64(0)
-    _q_ch_gain_err = float64(0)
+    _i_ch_offset_err: float64
+    _q_ch_offset_err: float64
+    _i_ch_gain_err: float64
+    _q_ch_gain_err: float64
 
-    _q_ch_phase_err = float(0.0174533)
-    _q_ch_phase_correction = float(0)
+    _q_ch_phase_err: float
+    _q_ch_phase_correction: float
 
     _q_bessel_state: NDArray[float64]
     _i_bessel_state: NDArray[float64]
@@ -98,7 +102,23 @@ class RFTransmitter(ABC):
     sos = bessel(9, 100E3, btype='lowpass', analog=False, fs=float(TRANSMIT_SIMULATION_SAMPLE_RATE), output="sos")
 
     def __init__(self):
-        pass
+        self.phase_reference = complex64(1 + 0j)
+        self._error_generation_state = False
+        self._genI_generator = Generator(PCG64())
+        self._genQ_generator = Generator(PCG64())
+
+        self.i_ch_ofst_correction = float64(0)
+        self.q_ch_ofst_correction = float64(0)
+        self.i_ch_gain_correction = float64(1)
+        self.q_ch_gain_correction = float64(1)
+
+        self._i_ch_offset_err = float64(0)
+        self._q_ch_offset_err = float64(0)
+        self._i_ch_gain_err = float64(0)
+        self._q_ch_gain_err = float64(0)
+
+        self._q_ch_phase_err = float(0.0174533)
+        self._q_ch_phase_correction = float(0)
 
     @abstractmethod
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
@@ -344,14 +364,16 @@ class RealTransmitter(RFTransmitter):
     modulator LO.
     """
 
-    rrc_filter_state = zeros(shape=(2, len(TX_RRC_Q17_COEFFICIENTS)-1), dtype=int64)
-    lpf_filter_state = zeros(shape=(2, len(TX_LPF_Q17_COEFFICIENTS)-1), dtype=int64)
-    halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_Q17_COEFFICIENTS)-1), dtype=int64)
-    halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_Q17_COEFFICIENTS)-1), dtype=int64)
-    halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_Q17_COEFFICIENTS)-1), dtype=int64)
+    def __init__(self):
+        super().__init__()
+        self.rrc_filter_state = zeros(shape=(2, len(TX_RRC_Q17_COEFFICIENTS)-1), dtype=int64)
+        self.lpf_filter_state = zeros(shape=(2, len(TX_LPF_Q17_COEFFICIENTS)-1), dtype=int64)
+        self.halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_Q17_COEFFICIENTS)-1), dtype=int64)
+        self.halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_Q17_COEFFICIENTS)-1), dtype=int64)
+        self.halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_Q17_COEFFICIENTS)-1), dtype=int64)
 
-    _q_bessel_state = zeros(shape=0, dtype=float64)
-    _i_bessel_state = zeros(shape=0, dtype=float64)
+        self._q_bessel_state = zeros(shape=0, dtype=float64)
+        self._i_bessel_state = zeros(shape=0, dtype=float64)
 
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
                              burst_ramp_periods: tuple[int, int]) -> tuple[NDArray[int64], NDArray[int64]]:
@@ -367,15 +389,15 @@ class RealTransmitter(RFTransmitter):
         :rtype: tuple[NDArray[int64], NDArray[int64]]
         """
         # 1. Determine if prepending and/or postpending zeros to flush is required
-        start_offset = 0
-        end_offset = 0
+        # start_offset = 0
+        # end_offset = 0
         # 1a. continuous with previous burst consideration:
         if burst_ramp_periods[0] != 0:
             # Since we ramp up, we are not continuous with previous data, and must flush the FIRs with prepended zeros
             insulated_input_data = concatenate((full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64),
                                                symbol_complex_data))
-            start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
+            # start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
         else:
             insulated_input_data = symbol_complex_data.copy()
@@ -386,14 +408,14 @@ class RealTransmitter(RFTransmitter):
             # should flush data with postpended zeros
             insulated_input_data = concatenate((insulated_input_data, full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64)))
-            end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
+            # end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
-        mag = sqrt(insulated_input_data.real[(start_offset):
-                                             len(insulated_input_data.real)-(end_offset)].astype(float64)**2
-                   + insulated_input_data.imag[(start_offset):
-                                               len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
+        # mag = sqrt(insulated_input_data.real[(start_offset):
+        #                                      len(insulated_input_data.real)-(end_offset)].astype(float64)**2
+        #            + insulated_input_data.imag[(start_offset):
+        #                                        len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
 
-        print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
+        # print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
 
         # 2. Upsample by x8 with zero insertions, and quantize data to Q1.17 fixed format stored in int64
         stage_1_symbols = oversample_data_quantized(insulated_input_data, 8)
@@ -439,17 +461,24 @@ class RealTransmitter(RFTransmitter):
 
         # 8. Extract useful part of burst
         full_pad_length = int(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*TX_BB_SAMPLING_FACTOR)
-        if burst_ramp_periods[0] != 0:
-            stage_9_symbols = stage_9_symbols[:, full_pad_length:].copy()
-        if burst_ramp_periods[1] != 0:
-            stage_9_symbols = stage_9_symbols[:, :-full_pad_length].copy()
+        adjust_len = (full_pad_length + TX_FILTER_GROUP_DELAY_AT_64SPS)
+
+        if burst_ramp_periods[0] != 0 and burst_ramp_periods[1] != 0:
+            # for isolated bursts we can handle removing group delay at this level
+            stage_9_symbols = stage_9_symbols[:, adjust_len:-adjust_len].copy()
+        else:
+            # For non isolated bursts we either throw away at the start or end
+            if burst_ramp_periods[0] != 0:
+                stage_9_symbols = stage_9_symbols[:, adjust_len:].copy()
+            if burst_ramp_periods[1] != 0:
+                stage_9_symbols = stage_9_symbols[:, :-adjust_len].copy()
 
         # TODO: Add runtime assertion if we go out of Fullscale for Q17
         # 9. Perform ramping on signal
         i_ramped_symbols, q_ramped_symbols = power_ramping_quantized(stage_9_symbols[0], stage_9_symbols[1],
                                                                      burst_ramp_periods)
-        mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
-        print("Post ramping ", "peakFS: ", mag.max()/(1 << 17), "rmsFS: ", sqrt(mean(mag**2))/(1 << 17))
+        # mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
+        # print("Post ramping ", "peakFS: ", mag.max()/(1 << 17), "rmsFS: ", sqrt(mean(mag**2))/(1 << 17))
 
         return i_ramped_symbols, q_ramped_symbols
 
@@ -537,8 +566,16 @@ class RealTransmitter(RFTransmitter):
         analog_q, self._q_bessel_state = sosfilt(self.sos, q_float_data, zi=self._q_bessel_state)
 
         # Discard padding
-        analog_i = analog_i[pads[0]: None if pads[1] == 0 else -pads[1]]
-        analog_q = analog_q[pads[0]: None if pads[1] == 0 else -pads[1]]
+        start = pads[0]
+        if pads[0] != 0:
+            start += TX_ANALOG_GROUP_DELAY_AT_640SPS
+        if pads[1] == 0:
+            stop = None
+        else:
+            stop = -(pads[1] + TX_ANALOG_GROUP_DELAY_AT_640SPS)
+
+        analog_i = analog_i[start:stop]
+        analog_q = analog_q[start:stop]
 
         # TODO: Add phase noise simulation
 
@@ -561,14 +598,16 @@ class IdealTransmitter(RFTransmitter):
     data asides from AWGN noise. However, still uses the same order of filters as its' RealTransmitter alternative
     """
 
-    rrc_filter_state = zeros(shape=(2, len(TX_RRC_FLOAT_COEFFICIENTS)-1), dtype=float64)
-    lpf_filter_state = zeros(shape=(2, len(TX_LPF_FLOAT_COEFFICIENTS)-1), dtype=float64)
-    halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_FLOAT_COEFFICIENTS)-1), dtype=float64)
-    halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_FLOAT_COEFFICIENTS)-1), dtype=float64)
-    halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_FLOAT_COEFFICIENTS)-1), dtype=float64)
+    def __init__(self):
+        super().__init__()
+        self.rrc_filter_state = zeros(shape=(2, len(TX_RRC_FLOAT_COEFFICIENTS)-1), dtype=float64)
+        self.lpf_filter_state = zeros(shape=(2, len(TX_LPF_FLOAT_COEFFICIENTS)-1), dtype=float64)
+        self.halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_FLOAT_COEFFICIENTS)-1), dtype=float64)
+        self.halfband_2_filter_state = zeros(shape=(2, len(TX_HALFBAND2_FLOAT_COEFFICIENTS)-1), dtype=float64)
+        self.halfband_3_filter_state = zeros(shape=(2, len(TX_HALFBAND3_FLOAT_COEFFICIENTS)-1), dtype=float64)
 
-    _q_bessel_state = zeros(shape=0, dtype=float64)
-    _i_bessel_state = zeros(shape=0, dtype=float64)
+        self._q_bessel_state = zeros(shape=0, dtype=float64)
+        self._i_bessel_state = zeros(shape=0, dtype=float64)
 
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
                              burst_ramp_periods: tuple[int, int]) -> tuple[NDArray[float64], NDArray[float64]]:
@@ -579,15 +618,15 @@ class IdealTransmitter(RFTransmitter):
 
         # 1a. continuous with previous burst consideration:
         # 1. Determine if prepending and/or postpending zeros to flush is required
-        start_offset = 0
-        end_offset = 0
+        # start_offset = 0
+        # end_offset = 0
         # 1a. continuous with previous burst consideration:
         if burst_ramp_periods[0] != 0:
             # Since we ramp up, we are not continuous with previous data, and must flush the FIRs with prepended zeros
             insulated_input_data = concatenate((full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64),
                                                symbol_complex_data))
-            start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
+            # start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
         else:
             insulated_input_data = symbol_complex_data.copy()
@@ -598,14 +637,14 @@ class IdealTransmitter(RFTransmitter):
             # should flush data with postpended zeros
             insulated_input_data = concatenate((insulated_input_data, full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64)))
-            end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
+            # end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
-        mag = sqrt(insulated_input_data.real[(start_offset):
-                                             len(insulated_input_data.real)-(end_offset)].astype(float64)**2
-                   + insulated_input_data.imag[(start_offset):
-                                               len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
+        # mag = sqrt(insulated_input_data.real[(start_offset):
+        #                                      len(insulated_input_data.real)-(end_offset)].astype(float64)**2
+        #            + insulated_input_data.imag[(start_offset):
+        #                                        len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
 
-        print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
+        # print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
 
         # 2. Upsample by x8 with zero insertions, and quantize data to Q1.17 fixed format stored in float64
         stage_1_symbols = oversample_data_float(insulated_input_data, 8)
@@ -651,16 +690,23 @@ class IdealTransmitter(RFTransmitter):
 
         # 8. Extract useful part of burst
         full_pad_length = int(BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT*TX_BB_SAMPLING_FACTOR)
-        if burst_ramp_periods[0] != 0:
-            stage_9_symbols = stage_9_symbols[:, full_pad_length:].copy()
-        if burst_ramp_periods[1] != 0:
-            stage_9_symbols = stage_9_symbols[:, :-full_pad_length].copy()
+        adjust_len = (full_pad_length + TX_FILTER_GROUP_DELAY_AT_64SPS)
+
+        if burst_ramp_periods[0] != 0 and burst_ramp_periods[1] != 0:
+            # for isolated bursts we can handle removing group delay at this level
+            stage_9_symbols = stage_9_symbols[:, adjust_len:-adjust_len].copy()
+        else:
+            # For non isolated bursts we either throw away at the start or end
+            if burst_ramp_periods[0] != 0:
+                stage_9_symbols = stage_9_symbols[:, adjust_len:].copy()
+            if burst_ramp_periods[1] != 0:
+                stage_9_symbols = stage_9_symbols[:, :-adjust_len].copy()
 
         # 9. Perform ramping on signal
         i_ramped_symbols, q_ramped_symbols = power_ramping_float(stage_9_symbols[0], stage_9_symbols[1],
                                                                  burst_ramp_periods)
-        mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
-        print("Post ramping ", "peakFS: ", mag.max(), "rmsFS: ", sqrt(mean(mag**2)))
+        # mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
+        # print("Post ramping ", "peakFS: ", mag.max(), "rmsFS: ", sqrt(mean(mag**2)))
 
         return i_ramped_symbols, q_ramped_symbols
 
@@ -709,8 +755,16 @@ class IdealTransmitter(RFTransmitter):
         analog_q, self._q_bessel_state = sosfilt(self.sos, q_float_data, zi=self._q_bessel_state)
 
         # Discard padding
-        analog_i = analog_i[pads[0]: None if pads[1] == 0 else -pads[1]]
-        analog_q = analog_q[pads[0]: None if pads[1] == 0 else -pads[1]]
+        start = pads[0]
+        if pads[0] != 0:
+            start += TX_ANALOG_GROUP_DELAY_AT_640SPS
+        if pads[1] == 0:
+            stop = None
+        else:
+            stop = -(pads[1] + TX_ANALOG_GROUP_DELAY_AT_640SPS)
+
+        analog_i = analog_i[start:stop]
+        analog_q = analog_q[start:stop]
         # 3. Convert to complex signal
 
         rf_signal = zeros_like(analog_i, dtype=complex128)

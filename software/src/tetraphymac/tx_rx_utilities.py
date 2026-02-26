@@ -583,7 +583,7 @@ def dsp_fir_i_q_stream_convolve(i_ch: NDArray[int64 | float64], q_ch: NDArray[in
         # The new state of the FIR is the last n_taps-1 values of what was passed
         new_fir_state = input_data_extended[-(n_taps-1):].copy()
 
-        if i == 1:
+        if i == 0:
             i_ch_output = output_accumulated_result
             i_fir_state = new_fir_state
         else:

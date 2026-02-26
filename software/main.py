@@ -17,17 +17,19 @@ def spectrum_db(x, Fs, n=131072):
     x = np.asarray(x)
     X = np.fft.fftshift(np.fft.fft(x, n=n))
     f = np.fft.fftshift(np.fft.fftfreq(n, d=1/Fs))
-    X /= len(x)
-    P = np.abs(X)**2 / 50
+    P = (np.abs(X)**2) / (len(x)**2 * 50)
     return f, P
 
 def bandpower(f, P, flo, fhi):
     idx = (f >= flo) & (f <= fhi)
     return P[idx].sum()
 
-def channel_power(f, P, fc, B):
+def channel_power(f, P, fc, B, window, N):
     half = B/2
-    return bandpower(f, P, fc-half, fc+half)
+    bp = bandpower(f, P, fc-half, fc+half)
+    if window == "hann":
+        bp /= np.mean(np.hanning(N))
+    return bp
 
 def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
     if yideal is not None:
@@ -47,14 +49,14 @@ def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
 
     B = ((1.35)*tetraTx.TETRA_SYMBOL_RATE)/2
 
-    Pch0_r  =  channel_power(f, Pyreal, 0.0,  B)
-    Pch25_r = 10*np.log10((channel_power(f, Pyreal, 25e3, B/2) + 1e-14) / (Pch0_r + 1e-14))
-    Pch50_r = 10*np.log10((channel_power(f, Pyreal, 50e3, B/2) + 1e-14) / (Pch0_r + 1e-14))
-    Pch75_r = 10*np.log10((channel_power(f, Pyreal, 75e3, B/2) + 1e-14) / (Pch0_r + 1e-14))
-    Pch100_250_r = 10*np.log10((channel_power(f, Pyreal, 175e3, 150E3) + 1e-14) / (Pch0_r + 1e-14))
-    Pch250_500_r = 10*np.log10((channel_power(f, Pyreal, 375e3, 250E3) + 1e-14) / (Pch0_r + 1e-14))
+    Pch0_r  =  channel_power(f, Pyreal, 0.0,  B, window, len(yreal))
+    Pch25_r = 10*np.log10((channel_power(f, Pyreal, 25e3, B/2, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
+    Pch50_r = 10*np.log10((channel_power(f, Pyreal, 50e3, B/2, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
+    Pch75_r = 10*np.log10((channel_power(f, Pyreal, 75e3, B/2, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
+    Pch100_250_r = 10*np.log10((channel_power(f, Pyreal, 175e3, 150E3, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
+    Pch250_500_r = 10*np.log10((channel_power(f, Pyreal, 375e3, 250E3, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
     print("\nStatistics for Real Quantized Specturm")
-    print(f"Signal Power (dBm): {10*np.log10(Pch0_r) +30}")
+    print(f"Signal Power (dBm): {10*np.log10(Pch0_r) +33}")
     print(f"25khz (dBc): {Pch25_r}")
     print(f"50khz (dBc): {Pch50_r}")
     print(f"75khz (dBc): {Pch75_r}")
@@ -63,14 +65,14 @@ def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
 
     if yideal is not None:
         print("\nStatistics for Ideal Specturm")
-        Pch0_i  =  channel_power(f, Pyideal, 0.0,  B)
-        Pch25_i = 10*np.log10((channel_power(f2, Pyideal, 25e3, B) + 1e-14) / (Pch0_i + 1e-14))
-        Pch50_i = 10*np.log10((channel_power(f2, Pyideal, 50e3, B) + 1e-14) / (Pch0_i + 1e-14))
-        Pch75_i = 10*np.log10((channel_power(f2, Pyideal, 75e3, B) + 1e-14) / (Pch0_i + 1e-14))
-        Pch100_250_i = 10*np.log10((channel_power(f2, Pyideal, 175e3, 150E3) + 1e-14) / (Pch0_i + 1e-14))
-        Pch250_500_i = 10*np.log10((channel_power(f2, Pyideal, 375e3, 250E3) + 1e-14) / (Pch0_i + 1e-14))
+        Pch0_i  =  channel_power(f, Pyideal, 0.0,  B, window, len(yreal))
+        Pch25_i = 10*np.log10((channel_power(f2, Pyideal, 25e3, B, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
+        Pch50_i = 10*np.log10((channel_power(f2, Pyideal, 50e3, B, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
+        Pch75_i = 10*np.log10((channel_power(f2, Pyideal, 75e3, B, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
+        Pch100_250_i = 10*np.log10((channel_power(f2, Pyideal, 175e3, 150E3, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
+        Pch250_500_i = 10*np.log10((channel_power(f2, Pyideal, 375e3, 250E3, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
 
-        print(f"Signal Power (dBm): {10*np.log10(Pch0_i)}")
+        print(f"Signal Power (dBm): {10*np.log10(Pch0_i)+33}")
         print(f"25khz (dBc): {Pch25_i}")
         print(f"50khz (dBc): {Pch50_i}")
         print(f"75khz (dBc): {Pch75_i}")
@@ -78,9 +80,9 @@ def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
         print(f"250-500khz (dBc): {Pch250_500_i}")
 
     plt.figure()
-    plt.plot(f, 10*np.log10(Pyreal + 1e-14), label="Quantized")
+    plt.plot(f, (10*np.log10(Pyreal + 1e-32)+30), label="Quantized")
     if yideal is not None:
-        plt.plot(f, 10*np.log10(Pyideal + 1e-14), label="Float")
+        plt.plot(f, (10*np.log10(Pyideal + 1e-32)+30), label="Float")
     plt.grid(True)
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Magnitude (dBm)")
@@ -140,72 +142,6 @@ def main():
     ul_tp_rf_channel = tetraPhy.PhysicalChannel(1, False, 905.1, 918.1, tetraPhy.PhyType.TRAFFIC_CHANNEL)
     ul_cp_rf_channel = tetraPhy.PhysicalChannel(4, False, 905.2, 918.2, tetraPhy.PhyType.CONTROL_CHANNEL)
 
-    # # below is as an example of using the low level classes to generate burst I and Q data
-    # # Then using it generate 7 bursts of continous uplink data
-
-    # # Encode the bursts in (L = 4 + n-1 = 7) bursts
-    # pkt_traffic_ch = tetraLch.TCH_4_8(n=4)
-    # pkt_traffic_ch.encode_type5_bits(pkt_traffic_ch.generate_rnd_input(4))
-
-    # print(pkt_traffic_ch.type_5_blocks.shape)
-
-    # #Generate physical channel burst wrapper:
-    # ul_tp_burst = tetraPhy.NormalUplinkBurst(ul_tp_rf_channel, 1, 1, 1)
-
-    # burst_modulation_bits = np.empty(shape=(7, 510), dtype=np.uint8)
-    # ramp_data = []
-    # for n in range(7):
-    #     ramp_tuple = (False, False)
-    #     if n == 0:
-    #         # at start of bursts we ramp up
-    #         ramp_tuple = (True, False)
-    #     elif n==6:
-    #         # at end of bursts we ramp down
-    #         ramp_tuple = (False, True)
-    #     else:
-    #         # inner bursts we are continous no ramping
-    #         ramp_tuple = (False, False)
-
-    #     print(f"Ramp State for {n}: {ramp_tuple}")
-    #     burst_modulation_bits[n][:] =  ul_tp_burst.construct_burst_sequence(pkt_traffic_ch,
-    #                                                                         ramp_up_down_state=ramp_tuple)
-    #     # Drop first burst bits
-    #     pkt_traffic_ch.type_5_blocks = pkt_traffic_ch.type_5_blocks[1:]
-    #     ramp_data.append((ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period))
-    #     print(f"Ramp offsets for {n}: {ramp_data[n]}")
-
-    # offsetF = tetraConstants.TX_BB_SAMPLING_FACTOR*255
-    # I_data = np.zeros(shape=(offsetF*7), dtype=np.int64)
-    # Q_data = np.zeros(shape=(offsetF*7), dtype=np.int64)
-
-    # for n in range(7):
-    #     print(ramp_data[n])
-    #     s_offset = (n)*offsetF
-    #     e_offset = (n+1)*offsetF
-    #     I_data[s_offset:e_offset],  Q_data[s_offset:e_offset] = tx_real.transmit_burst(burst_modulation_bits[n],
-    #                                                                                    ramp_data[n])
-
-    # data = np.vstack((I_data, Q_data))
-    # tetraUtil.save_burst_iqfile(data, "iqDataCont.iq", endian="little")
-    # i_data, q_data = tetraUtil.read_burst_iqfile("iqDataCont.iq", msb_aligned=True, endian="little")
-    # I_data = i_data.copy()
-    # Q_data = q_data.copy()
-
-    # scale = float((1 << tetraUtil.NUMBER_OF_FRACTIONAL_BITS))
-
-    # I_real = I_data.astype(np.float64) / scale
-    # Q_real = Q_data.astype(np.float64) / scale
-    # yreal = (I_real) + 1.0j*(Q_real)
-    # yreal = yreal.astype(np.complex64)
-
-    # Fs = tetraConstants.TX_BB_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE
-
-    # #Envelope comparison
-    # power_envelope(yreal, None, Fs)
-
-    # #Spectra comparison
-    # spectrum_and_acpr(yreal, None, Fs)
-
     pkt_traffic_ch = tetraLch.TCH_4_8(n=4)
     pkt_traffic_ch.encode_type5_bits(pkt_traffic_ch.generate_rnd_input(4))
 
@@ -241,70 +177,52 @@ def main():
     # Spectra comparison
     sn0 = (ul_tp_burst.start_ramp_period-1)*tetraUtil.TX_BB_SAMPLING_FACTOR
     snmax = len(yreal) - ((ul_tp_burst.end_guard_bit_period-1)*tetraUtil.TX_BB_SAMPLING_FACTOR)
-    print("Real digital baseband results:")
+    print("Real digital baseband ACPR results:")
     print(tetraMeas.tx_acpr_measurement(yreal, sn0, snmax, Fs))
-    print("\n")
-    print("Ideal digital baseband results:")
+    print("Ideal digital baseband ACPR results:")
     print(tetraMeas.tx_acpr_measurement(yideal, sn0, snmax, Fs))
-    print("\n")
+
+    print("Real digital baseband Wideband Noise results:")
+    print(tetraMeas.tx_wideband_noise_measurement(yreal.astype(np.complex64), sn0, snmax, Fs, True))
+    print("Ideal digital baseband Wideband Noise results:")
+    print(tetraMeas.tx_wideband_noise_measurement(yideal.astype(np.complex64), sn0, snmax, Fs, True))
     spectrum_and_acpr(yreal, yideal, Fs)
 
-    # DAC code with some impairments:
 
-    I_real, Q_real  = tx_real.transmit_burst(burst_modulation_bits,
-                                            (ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period),
-                                            debug_return_stage="dac")
-
-    I_ideal, Q_ideal = tx_ideal.transmit_burst(burst_modulation_bits,
-                                              (ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period),
-                                              debug_return_stage="dac")
-
-    scale = float((1 << tetraUtil.NUMBER_OF_FRACTIONAL_BITS))
-
-    yreal = (I_real) + 1.0j*(Q_real)
-    yreal = yreal.astype(np.complex64)
-
-    yideal = I_ideal + 1.0j*Q_ideal
-    yideal = yideal.astype(np.complex64)
-
-    Fs = tetraConstants.TX_BB_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE
-
-    # # Envelope comparison
-    power_envelope(yreal, yideal, Fs, True)
-
-    # Spectra comparison
-    sn0 = (ul_tp_burst.start_ramp_period-1)*tetraUtil.TX_BB_SAMPLING_FACTOR
-    snmax = len(yreal) - ((ul_tp_burst.end_guard_bit_period-1)*tetraUtil.TX_BB_SAMPLING_FACTOR)
-    print("Real digital baseband results:")
-    print(tetraMeas.tx_acpr_measurement(yreal, sn0, snmax, Fs))
-    print("\n")
-    print("Ideal digital baseband results:")
-    print(tetraMeas.tx_acpr_measurement(yideal, sn0, snmax, Fs))
-    print("\n")
-    spectrum_and_acpr(yreal, yideal, Fs)
-
-    # Tx full output with impairments
 
     rx_real = tx_real.transmit_burst(burst_modulation_bits,
                                      (ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period))
 
     rx_ideal = tx_ideal.transmit_burst(burst_modulation_bits,
                                        (ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period))
-
     Fs2 = tetraConstants.TX_BB_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE * tetraTx.TRANSMIT_SIMULATION_SAMPLING_FACTOR
-
+    
     # Envelope comparison
-    power_envelope(rx_real, rx_ideal, Fs2, True)
+    power_envelope(rx_real, rx_ideal, Fs, True)
 
     # Spectra comparison
     rp_f = tetraUtil.TX_BB_SAMPLING_FACTOR*tetraTx.TRANSMIT_SIMULATION_SAMPLING_FACTOR
     sn0 = (ul_tp_burst.start_ramp_period-1)*rp_f
     snmax = len(rx_real) - ((ul_tp_burst.end_guard_bit_period-1)*rp_f)
 
-    print("Real digital baseband results:")
+    print("Real digital tx ACPR results:")
     print(tetraMeas.tx_acpr_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
-    print("Ideal digital baseband results:")
+    print("Ideal digital tx ACPR results:")
     print(tetraMeas.tx_acpr_measurement(rx_ideal.astype(np.complex64), sn0, snmax, Fs2))
+
+    print("Real digital tx Wideband Noise results:")
+    print(tetraMeas.tx_wideband_noise_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
+    print("Ideal digital tx Wideband Noise results:")
+    print(tetraMeas.tx_wideband_noise_measurement(rx_ideal.astype(np.complex64), sn0, snmax, Fs2))
+
+    tetraMeas.psd_welch(rx_real, sn0, snmax, Fs2)
+    tetraMeas.psd_welch(rx_ideal, sn0, snmax, Fs2)
+
+    
+    # Demonstrate .iq file saving ability
+    data = np.vstack((rx_real.real, rx_real.imag))
+    print(rx_real.size)
+    tetraUtil.save_burst_iqfile(data, "iqData.iq", endian="little")
 
     rx_real = rx_real[ul_tp_burst.start_ramp_period*rp_f:-ul_tp_burst.end_ramp_period*rp_f]
     rx_ideal = rx_ideal[ul_tp_burst.start_ramp_period*rp_f:-ul_tp_burst.end_ramp_period*rp_f]
