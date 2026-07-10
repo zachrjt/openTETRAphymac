@@ -12,7 +12,7 @@ import numpy as np
 
 import src.tetraphymac.logical_channels as lc
 import src.tetraphymac.physical_channels as bursts
-
+import src.tetraphymac.constants as constants
 np.random.seed(10)
 
 ###################################################################################################
@@ -288,7 +288,7 @@ CTRL_UL_INVALID_INIT = [
 
     # SSN out of range
     ("ctrl_ul_invalid_ssn0", "CP", 1, 1, 1, 0),
-    ("ctrl_ul_invalid_ssn_hi", "CP", 1, 1, 1, bursts.TIMESLOT_SUBSLOT_LENGTH + 1),
+    ("ctrl_ul_invalid_ssn_hi", "CP", 1, 1, 1, constants.TIMESLOT_SUBSLOT_LENGTH + 1),
 ]
 
 CTRL_UL_INVALID_BUILD = [
@@ -378,7 +378,7 @@ NORM_UL_INVALID_INIT = [
 
     # SSN out of range
     ("ul_invalid_ssn0",  "TP", 1, 1, 1, 0, lc.TCH_4_8, None),
-    ("ul_invalid_ssn_hi","TP", 1, 1, 1, bursts.TIMESLOT_SUBSLOT_LENGTH + 1, lc.TCH_4_8, None),
+    ("ul_invalid_ssn_hi","TP", 1, 1, 1, constants.TIMESLOT_SUBSLOT_LENGTH + 1, lc.TCH_4_8, None),
 ]
 
 NORM_UL_INVALID_BUILD = [
@@ -476,7 +476,7 @@ LIN_UL_INVALID_INIT = [
 
     # invalid SSN
     ("lin_ul_init_ssn0",   "CP", 1, 18, 1, 0, lc.CLCH),
-    ("lin_ul_init_ssn_hi", "CP", 1, 18, 1, bursts.TIMESLOT_SUBSLOT_LENGTH + 1, lc.CLCH),
+    ("lin_ul_init_ssn_hi", "CP", 1, 18, 1, constants.TIMESLOT_SUBSLOT_LENGTH + 1, lc.CLCH),
 
     # invalid phy string
     ("lin_ul_init_phy_invalid", "XX", 1, 18, 1, 1, lc.CLCH),

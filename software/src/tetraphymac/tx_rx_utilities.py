@@ -20,6 +20,10 @@ NUMBER_OF_FRACTIONAL_BITS = 17        # Relates to Q17 fixed point representatio
 PLUTOSDR_DAC_BIT_NUMBER = 12          # Number of bits in pluto sdr
 OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER = 10    # Number of bits in openTETRAphymac hw implementation (AD9115)
 
+# Single side band phase noise mask of openTETRAphymac tx, note this is an initial placeholder while hw analysis matures
+OPENTETRAPHYMAC_TX_HW_SSB_MASK = {"10 Hz": (10.0, -50.0), "100 Hz": (100.0, -80.0), "1 kHz": (1e3, -108.0),
+                                  "10 kHz": (10e3, -132.0), "100 kHz": (100e3, -150.0), "1 MHz": (1e6, -160.0)}
+
 VALID_ROUNDING_METHODS = ('rti', 'rtz', 'truncate', 'unbiased')
 VALID_START_GUARD_PERIOD_OFFSETS = [0, 10, 12, 34, 120]
 VALID_END_GUARD_PERIOD_OFFSETS = [0, 8, 10, 14, 16]
@@ -139,7 +143,7 @@ def generate_ramping_lut_quantized(n: int, sps: int = TX_BB_SAMPLING_FACTOR) -> 
     profile = 0.5 * (1.0 - cos(pi * k / (((n-2)*sps)-1)))
     lut = np_round(profile * (1 << NUMBER_OF_FRACTIONAL_BITS)).astype(int64)
     lut[0] = 0
-    lut[-1] = (1 << NUMBER_OF_FRACTIONAL_BITS)
+    lut[-1] = 1 << NUMBER_OF_FRACTIONAL_BITS
 
     # prepend and postpend the full symbol period 0 at the start and 1 at the end
     lut = concatenate((zeros(sps, dtype=int64), lut))
@@ -718,7 +722,7 @@ def dsp_fir_float_stream(input_symbols: NDArray[float64], h_coefficients: NDArra
     burst_segment *= gain
 
     # The new state of the FIR is the last n_taps-1 values of what was passed
-    new_fir_state = full_accumulated_result[-(n_taps-1):].copy()
+    new_fir_state = input_data_extended[-(n_taps-1):].copy()
 
     return burst_segment, new_fir_state
 
@@ -898,3 +902,5 @@ def power_ramping_float(i_ch: NDArray[float64], q_ch: NDArray[float64],
     q_ch_product = q_ch.astype(float64) * envelope.astype(float64)
 
     return i_ch_product.astype(float64), q_ch_product.astype(float64)
+
+###################################################################################################
