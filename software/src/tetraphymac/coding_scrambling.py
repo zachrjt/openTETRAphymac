@@ -40,7 +40,7 @@ _RM_DECODER_SHIFTS_14 = arange(13, -1, -1, dtype=uint32)
 # generator polynominal is ordered as Gn: [d0(current), d1, d2, d3, d4], for [G1, G2, G3, G4] overall
 RCPC_MOTHER_GENERATOR = array([[1, 1, 0, 0, 1], [1, 0, 1, 1, 1], [1, 1, 1, 0, 1], [1, 1, 0, 1, 1]], dtype=uint8)
 RCPC_TAIL_LENGTH = 4
-RCPC_TRACEBACK_LENGTH = 40   # instead of performing full Viterbi traceback we just limit here to reasonable amount
+RCPC_TRACEBACK_LENGTH = 40   # instead of performing full Viterbi traceback we just limit here to a reasonable amount
 
 TETRA_32_SCRAMBLING_SEQUENCE = array([0, 1, 2, 4, 5, 7, 8, 10, 11, 12, 16, 22, 23, 26, 31], dtype=uint8)
 

@@ -1,1 +1,0 @@
-# TODO: write scrambling and coding tests during numpy refactor\

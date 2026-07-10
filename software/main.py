@@ -136,6 +136,7 @@ def power_envelope(yreal, yideal, Fs, overlay:False):
 
 def main():
 
+    # Generate burst data
     tx_real = tetraTx.RealTransmitter()
     tx_ideal = tetraTx.IdealTransmitter()
 
@@ -144,51 +145,10 @@ def main():
 
     pkt_traffic_ch = tetraLch.TCH_4_8(n=4)
     pkt_traffic_ch.encode_type5_bits(pkt_traffic_ch.generate_rnd_input(4))
-
     ul_tp_rf_channel = tetraPhy.PhysicalChannel(1, False, 905.1, 918.1, tetraPhy.PhyType.TRAFFIC_CHANNEL)
 
     ul_tp_burst = tetraPhy.NormalUplinkBurst(ul_tp_rf_channel, 1, 1, 1)
     burst_modulation_bits = ul_tp_burst.construct_burst_sequence(pkt_traffic_ch)
-
-
-    I_real, Q_real  = tx_real.transmit_burst(burst_modulation_bits,
-                                            (ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period),
-                                            debug_return_stage="baseband")
-
-    I_ideal, Q_ideal = tx_ideal.transmit_burst(burst_modulation_bits,
-                                              (ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period),
-                                              debug_return_stage="baseband")
-
-    scale = float((1 << tetraUtil.NUMBER_OF_FRACTIONAL_BITS))
-
-    I_real = I_real.astype(np.float64) / scale
-    Q_real = Q_real.astype(np.float64) / scale
-    yreal = (I_real) + 1.0j*(Q_real)
-    yreal = yreal.astype(np.complex64)
-
-    yideal = I_ideal + 1.0j*Q_ideal
-    yideal = yideal.astype(np.complex64)
-
-    Fs = tetraConstants.TX_BB_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE
-
-    # # Envelope comparison
-    power_envelope(yreal, yideal, Fs, True)
-
-    # Spectra comparison
-    sn0 = (ul_tp_burst.start_ramp_period-1)*tetraUtil.TX_BB_SAMPLING_FACTOR
-    snmax = len(yreal) - ((ul_tp_burst.end_guard_bit_period-1)*tetraUtil.TX_BB_SAMPLING_FACTOR)
-    print("Real digital baseband ACPR results:")
-    print(tetraMeas.tx_acpr_measurement(yreal, sn0, snmax, Fs))
-    print("Ideal digital baseband ACPR results:")
-    print(tetraMeas.tx_acpr_measurement(yideal, sn0, snmax, Fs))
-
-    print("Real digital baseband Wideband Noise results:")
-    print(tetraMeas.tx_wideband_noise_measurement(yreal.astype(np.complex64), sn0, snmax, Fs, True))
-    print("Ideal digital baseband Wideband Noise results:")
-    print(tetraMeas.tx_wideband_noise_measurement(yideal.astype(np.complex64), sn0, snmax, Fs, True))
-    spectrum_and_acpr(yreal, yideal, Fs)
-
-
 
     rx_real = tx_real.transmit_burst(burst_modulation_bits,
                                      (ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period))
@@ -198,7 +158,7 @@ def main():
     Fs2 = tetraConstants.TX_BB_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE * tetraTx.TRANSMIT_SIMULATION_SAMPLING_FACTOR
     
     # Envelope comparison
-    power_envelope(rx_real, rx_ideal, Fs, True)
+    power_envelope(rx_real, rx_ideal, Fs2, True)
 
     # Spectra comparison
     rp_f = tetraUtil.TX_BB_SAMPLING_FACTOR*tetraTx.TRANSMIT_SIMULATION_SAMPLING_FACTOR
@@ -220,13 +180,13 @@ def main():
 
     
     # Demonstrate .iq file saving ability
-    data = np.vstack((rx_real.real, rx_real.imag))
-    print(rx_real.size)
-    tetraUtil.save_burst_iqfile(data, "iqData.iq", endian="little")
+    # data = np.vstack((rx_real.real, rx_real.imag))
+    # print(rx_real.size)
+    # tetraUtil.save_burst_iqfile(data, "iqData.iq", endian="little")
 
-    rx_real = rx_real[ul_tp_burst.start_ramp_period*rp_f:-ul_tp_burst.end_ramp_period*rp_f]
-    rx_ideal = rx_ideal[ul_tp_burst.start_ramp_period*rp_f:-ul_tp_burst.end_ramp_period*rp_f]
-    spectrum_and_acpr(rx_real, rx_ideal, Fs2, "hann")
+    # rx_real = rx_real[ul_tp_burst.start_ramp_period*rp_f:-ul_tp_burst.end_ramp_period*rp_f]
+    # rx_ideal = rx_ideal[ul_tp_burst.start_ramp_period*rp_f:-ul_tp_burst.end_ramp_period*rp_f]
+    # spectrum_and_acpr(rx_real, rx_ideal, Fs2, "hann")
 
     #########################################################################################################
 

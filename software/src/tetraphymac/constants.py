@@ -113,6 +113,23 @@ class TransmissionMode(str, Enum):
 # TRANSCIEVER CONSTANTS
 
 
+TETRA_SYMBOL_RATE = 18_000  # The base EN 300 392-2 symbol rate
+
 TX_BB_SAMPLING_FACTOR = 64  # The culmative oversampling factor of the tx baseband processing
+
+TRANSMIT_SIMULATION_SAMPLING_FACTOR = 10  # The internal sw simulator sampling factor over the DAC rate
+
+# Following constants Per EN 300 392-2 V2.4.2 - 9.3
+HYPERFRAME_MULTIFRAME_LENGTH = 60   # Number of multiframes in a hyperframe
+
+MULTIFRAME_TDMAFRAME_LENGTH = 18    # Number of frames in a multiframe
+
+CONTROL_FRAME_NUMBER = 18           # The frame number (FN) of the control frame (last frame in multiframe)
+
+TDMAFRAME_TIMESLOT_LENGTH = 4       # How many timeslots in a frame
+
+TIMESLOT_BIT_LENGTH = 510           # How many modulation bits in a timeslot
+
+TIMESLOT_SUBSLOT_LENGTH = 2         # How many subslots in a timeslot
 
 #############################################

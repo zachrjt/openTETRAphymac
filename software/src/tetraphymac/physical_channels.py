@@ -20,18 +20,12 @@ from dataclasses import dataclass
 from numpy import uint8, array, empty, zeros
 from numpy.typing import NDArray
 
-from .constants import PhyType, LinkDirection, BurstContent, ChannelKind, ChannelName
+from .constants import CONTROL_FRAME_NUMBER, HYPERFRAME_MULTIFRAME_LENGTH, MULTIFRAME_TDMAFRAME_LENGTH, \
+    TDMAFRAME_TIMESLOT_LENGTH, TIMESLOT_BIT_LENGTH, TIMESLOT_SUBSLOT_LENGTH, PhyType, LinkDirection, BurstContent, \
+    ChannelKind, ChannelName
 from .logical_channels import BLCH, BNCH, BSCH, CLCH, SCH_HD, SCH_F, SCH_HU, AACH, LogicalChannelVD, \
     TrafficChannel, STCH
 from .modulation import calculate_phase_adjustment_bits
-
-# Following constants Per EN 300 392-2 V2.4.2 - 9.3
-HYPERFRAME_MULTIFRAME_LENGTH = 60   # Number of multiframes in a hyperframe
-MULTIFRAME_TDMAFRAME_LENGTH = 18    # Number of frames in a multiframe
-CONTROL_FRAME_NUMBER = 18           # The frame number (FN) of the control frame (last frame in multiframe)
-TDMAFRAME_TIMESLOT_LENGTH = 4       # How many timeslots in a frame
-TIMESLOT_BIT_LENGTH = 510           # How many modulation bits in a timeslot
-TIMESLOT_SUBSLOT_LENGTH = 2         # How many subslots in a timeslot
 
 # Per EN 300 392-2 V2.4.2 - 9.4.4.3.1
 FREQUENCY_CORRECTION_FIELD = array([1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

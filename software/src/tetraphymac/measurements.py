@@ -4,12 +4,13 @@ reciever chains. It also contains functions to plot spectra and waveforms
 """
 from typing import Dict, Tuple
 import warnings
-from numpy import zeros, float64, isclose, cos, sin, pi, exp, arange, \
-                  mean, log10, pad, complex64, ceil, log2, fft, complex128, linspace, argsort
-from numpy import sum as np_sum
-from numpy import abs as np_abs
+from numpy import zeros, float64, isclose, cos, sin, pi, exp, arange, logspace, vdot, polyfit, floor, \
+                  mean, log10, pad, complex64, ceil, log2, fft, complex128, linspace, argsort, unwrap, angle
+from numpy import sum as np_sum, abs as np_abs
 from numpy.typing import NDArray
+
 from scipy.signal import welch
+from scipy.signal import sosfilt as sp_sosfilt
 import matplotlib.pyplot as plt
 
 from .transmitter import TETRA_SYMBOL_RATE
@@ -115,7 +116,7 @@ def tx_acpr_measurement(tx_data: NDArray[complex64], sn0: int, snmax: int,
      returns a dict with format: {"Frequency Offset", (absolute power, relative power to P0, requirement, Passed?)}
     :rtype: Dict[str, Tuple[float, float, str, bool]]
     """
-    # Assumed averaging has already took place at higher level, and that the original signal is complex baseband
+    # Assumed averaging has already took place at a higher level, and that the original signal is complex baseband
     sps = int(sample_rate / TETRA_SYMBOL_RATE)
     rrc_coefficents = _rrc_fir(sps)
     rrc_gd = (len(rrc_coefficents)-1) // 2
@@ -192,7 +193,7 @@ def tx_wideband_noise_measurement(tx_data: NDArray[complex64], sn0: int, snmax: 
     """
     Performs wideband noise measurements on transmit data for for the 100-250khz and 250-500khz band offsets
     through a RRC filter with 0.35 rolloff. Measures at overlapping offsets in the band to determine the worse case
-    performance, and evaluattes it against the TETRA MS Tx specifications for class 4 above 700 MHz. If the mask
+    performance, and evaluates it against the TETRA MS Tx specifications for class 4 above 700 MHz. If the mask
     fails then it raises a warning, and regardless of failure returns the resulting test data in a dict.
 
     :param tx_data:  2-D array of M bursts of data, arranged as burst per row, stored as complex64 or a single 1 burst,
@@ -285,7 +286,6 @@ def tx_wideband_noise_measurement(tx_data: NDArray[complex64], sn0: int, snmax: 
 def psd_welch(tx_data: NDArray[complex64],
               sn0: int, snmax: int, sample_rate: float,
               onesided: bool = False,
-              window: str = "hann",
               nperseg: int = 32768):
     """
     Creates a matplotlit plt of the PSD of the passed tx_data via Welch's Method.
@@ -301,8 +301,6 @@ def psd_welch(tx_data: NDArray[complex64],
     :type sample_rate: float
     :param onesided: Wether a onesided or two sided (complex) PSD plot is generated
     :type onesided: bool
-    :param window: The type of window to use, must be compatible with scipy getwindow() method
-    :type window: str
     :param nperseg: The number of samples per segment for Welch's method, should be a 2^N value, and result in a segment
      time length that is at least 4 times that of the total data lenght to ensure stable PSD estimates, controls the
      frequency resolution of the resulting PSD
@@ -321,7 +319,7 @@ def psd_welch(tx_data: NDArray[complex64],
     freq_list = zeros(1, dtype=float64)
     for r in range(tx_data.shape[0]):
         f, tx_amp = welch(tx_data[r, sn0:snmax], fs=sample_rate,
-                          window=window, nperseg=nperseg,
+                          window="hann", nperseg=nperseg,
                           noverlap=int(nperseg//2), return_onesided=onesided)
         tx_power = tx_amp / 50.0
         if psd_accum is None:
@@ -339,6 +337,88 @@ def psd_welch(tx_data: NDArray[complex64],
     plt.plot(freq_list[sort_index], tx_dbm_density[sort_index])  # type: ignore
     plt.grid()  # type: ignore
     plt.xlabel("Frequency (Hz)")  # type: ignore
+    plt.xlim(left=-4E6 if not onesided else 0, right=4E6)  # type: ignore
     plt.ylabel("PSD (dBm/Hz) into 50ohm")  # type: ignore
     plt.title(f"Welch PSD of tx_data, RBW: {(1/tseg):.2f}")  # type: ignore
     plt.show()  # type: ignore
+
+
+def measure_iir_group_delay(fs: float64 | float, h_sos: NDArray[float64],
+                            start_eval_f: float64 | float, end_eval_f: float64 | float, n_eval_points: int = 8,
+                            plot_result: bool = False) -> int:
+    """
+    Measures the group delay of a sos (second order sections) filter in a finite bandwidth. useful for
+    determing the delay of an IIR filter which is not fixed for all frequencies, returns and floor result for the delay.
+
+    Works by measuring phase response of filter transfer function at different frequency points, unwrapping it, and
+    calculating group delay as -(d/dw) * phase(f) where (d/dw) is the derivative with respect to angular frequency.
+
+    Can plot the fitted phase response data if plot_result is set to True to verify linearity.
+
+    :param fs: Sample rate of filter in Hz.
+    :type fs: float64 | float
+    :param h_sos: Filter sos (second-order-sections) array for IIR scipy filter functions such as bessel
+    :type h_sos: NDArray[float64]
+    :param start_eval_f: The start frequency point in Hz of the group delay evaluation bandwidth.
+    :type start_eval_f: float64 | float
+    :param end_eval_f: The end frequency point in Hz of the group delay evaluation bandwidth
+    :type end_eval_f: float64 | float
+    :param n_eval_points: The number of frequency evaluation points to use, higher numbers may help average when the
+    the phase response is not as flat
+    :type n_eval_points: int
+    :param plot_result: Boolean for wether or not to generate plot of the linear phase fit for calculating group delay
+    :type plot_result: bool
+    :return: Returns the floor result of the group delay in number of samples at Fs rate
+    :rtype: int
+    """
+    # 1. Generate frequency array for evaluation
+    if start_eval_f >= end_eval_f:
+        raise ValueError(f"Start and end points for group delay evaluation are swapped or equal:"
+                         f"start: {start_eval_f:.3f} and end: {end_eval_f:.3f}")
+    if end_eval_f > (fs/2):
+        raise ValueError(f"End evaluation frequency point for group delay calculation is greater than nyquist:"
+                         f"End Point: {end_eval_f:.3f} vs. Nyquist: {fs/2:.3f}")
+
+    f_array = logspace(start=log10(start_eval_f), stop=log10(end_eval_f), num=n_eval_points, dtype=float64)
+
+    # 2. Generate time array and phase result array
+    phase_array = zeros(shape=f_array.size, dtype=float64)
+    end_time = (1/end_eval_f)*5000
+    t = arange(0, end_time, 1/fs, dtype=float64)
+
+    # 3. Evaluate phsae delay over f_eval points
+    for i, f in enumerate(f_array):
+
+        x = exp(1j * 2 * pi * f * t)
+        yi = float64(sp_sosfilt(h_sos, x.real))  # type: ignore
+        yq = float64(sp_sosfilt(h_sos, x.imag))  # type: ignore
+        y = yi + 1j*yq
+
+        discard = int(0.3 * t.size)
+        x = x[discard:]
+        y = y[discard:]  # type: ignore
+
+        # Calculate transfer function for the frequency point
+        h_filter = vdot(x, y) / vdot(x, x)   # type: ignore
+        phase = angle(h_filter)   # type: ignore
+        phase_array[i] = phase
+
+    # 4. Calculate delay result and plot
+    w = 2*pi*f_array
+    phase_array = unwrap(phase_array)  # type: ignore
+    # Recall group delay is negative derivative of phase response (in radians) with respect to angular frequency
+    coeff = polyfit(w, phase_array, 1)
+
+    # Using floor rounding is fine, we dont want to miss a sample index that contains part of our signal so a fractional
+    # delay amount is tolerable
+    delay_s = int(floor(-1*coeff[0] * (fs)))
+
+    if plot_result:
+        plt.figure()  # type: ignore
+        plt.scatter(f_array, phase_array, label=" Unwrapped Transfer Function Phase")  # type: ignore
+        plt.title("Phase (rad) vs Frequency (Hz) of Filter Transfer Function")  # type: ignore
+        plt.grid()  # type: ignore
+        plt.xlabel("Frequency (Hz)")  # type: ignore
+        plt.ylabel("Phase (radians)")  # type: ignore
+
+    return delay_s
