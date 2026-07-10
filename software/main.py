@@ -10,7 +10,6 @@ import src.tetraphymac.transmitter as tetraTx
 import src.tetraphymac.tx_rx_utilities as tetraUtil
 import src.tetraphymac.constants as tetraConstants
 import src.tetraphymac.measurements as tetraMeas
-import src.tetraphymac.measurements as tetraMeas
 
 np.random.seed(10)
 
@@ -19,7 +18,6 @@ def spectrum_db(x, Fs, n=131072):
     X = np.fft.fftshift(np.fft.fft(x, n=n))
     f = np.fft.fftshift(np.fft.fftfreq(n, d=1/Fs))
     P = (np.abs(X)**2) / (len(x)**2 * 50)
-    P = (np.abs(X)**2) / (len(x)**2 * 50)
     return f, P
 
 def bandpower(f, P, flo, fhi):
@@ -27,33 +25,19 @@ def bandpower(f, P, flo, fhi):
     return P[idx].sum()
 
 def channel_power(f, P, fc, B, window, N):
-def channel_power(f, P, fc, B, window, N):
     half = B/2
     bp = bandpower(f, P, fc-half, fc+half)
     if window == "hann":
         bp /= np.mean(np.hanning(N))
     return bp
-    bp = bandpower(f, P, fc-half, fc+half)
-    if window == "hann":
-        bp /= np.mean(np.hanning(N))
-    return bp
 
-def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
 def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
     if yideal is not None:
         if window == "ones":
             windowIdeal = np.ones(len(yideal), dtype=np.float64)
         elif window == "hann":
             windowIdeal = np.hanning(len(yideal))
-        if window == "ones":
-            windowIdeal = np.ones(len(yideal), dtype=np.float64)
-        elif window == "hann":
-            windowIdeal = np.hanning(len(yideal))
 
-    if window == "ones":
-        windowReal = np.ones(len(yreal), dtype=np.float64)
-    elif window == "hann":
-        windowReal = np.hanning(len(yreal))
     if window == "ones":
         windowReal = np.ones(len(yreal), dtype=np.float64)
     elif window == "hann":
@@ -71,14 +55,7 @@ def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
     Pch75_r = 10*np.log10((channel_power(f, Pyreal, 75e3, B/2, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
     Pch100_250_r = 10*np.log10((channel_power(f, Pyreal, 175e3, 150E3, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
     Pch250_500_r = 10*np.log10((channel_power(f, Pyreal, 375e3, 250E3, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
-    Pch0_r  =  channel_power(f, Pyreal, 0.0,  B, window, len(yreal))
-    Pch25_r = 10*np.log10((channel_power(f, Pyreal, 25e3, B/2, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
-    Pch50_r = 10*np.log10((channel_power(f, Pyreal, 50e3, B/2, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
-    Pch75_r = 10*np.log10((channel_power(f, Pyreal, 75e3, B/2, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
-    Pch100_250_r = 10*np.log10((channel_power(f, Pyreal, 175e3, 150E3, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
-    Pch250_500_r = 10*np.log10((channel_power(f, Pyreal, 375e3, 250E3, window, len(yreal)) + 1e-32) / (Pch0_r + 1e-32))
     print("\nStatistics for Real Quantized Specturm")
-    print(f"Signal Power (dBm): {10*np.log10(Pch0_r) +33}")
     print(f"Signal Power (dBm): {10*np.log10(Pch0_r) +33}")
     print(f"25khz (dBc): {Pch25_r}")
     print(f"50khz (dBc): {Pch50_r}")
@@ -94,14 +71,7 @@ def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
         Pch75_i = 10*np.log10((channel_power(f2, Pyideal, 75e3, B, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
         Pch100_250_i = 10*np.log10((channel_power(f2, Pyideal, 175e3, 150E3, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
         Pch250_500_i = 10*np.log10((channel_power(f2, Pyideal, 375e3, 250E3, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
-        Pch0_i  =  channel_power(f, Pyideal, 0.0,  B, window, len(yreal))
-        Pch25_i = 10*np.log10((channel_power(f2, Pyideal, 25e3, B, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
-        Pch50_i = 10*np.log10((channel_power(f2, Pyideal, 50e3, B, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
-        Pch75_i = 10*np.log10((channel_power(f2, Pyideal, 75e3, B, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
-        Pch100_250_i = 10*np.log10((channel_power(f2, Pyideal, 175e3, 150E3, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
-        Pch250_500_i = 10*np.log10((channel_power(f2, Pyideal, 375e3, 250E3, window, len(yreal)) + 1e-32) / (Pch0_i + 1e-32))
 
-        print(f"Signal Power (dBm): {10*np.log10(Pch0_i)+33}")
         print(f"Signal Power (dBm): {10*np.log10(Pch0_i)+33}")
         print(f"25khz (dBc): {Pch25_i}")
         print(f"50khz (dBc): {Pch50_i}")
@@ -111,9 +81,7 @@ def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
 
     plt.figure()
     plt.plot(f, (10*np.log10(Pyreal + 1e-32)+30), label="Quantized")
-    plt.plot(f, (10*np.log10(Pyreal + 1e-32)+30), label="Quantized")
     if yideal is not None:
-        plt.plot(f, (10*np.log10(Pyideal + 1e-32)+30), label="Float")
         plt.plot(f, (10*np.log10(Pyideal + 1e-32)+30), label="Float")
     plt.grid(True)
     plt.xlabel("Frequency (Hz)")
@@ -123,17 +91,14 @@ def spectrum_and_acpr(yreal, yideal, Fs, window="ones"):
     plt.show()
 
 def power_envelope(yreal, yideal, Fs, overlay:False):
-def power_envelope(yreal, yideal, Fs, overlay:False):
 
     n = len(yreal)
     t = np.arange(n) / Fs
 
     env_real = 10*np.log10(((np.abs(yreal[:n])**2) / 50) + 1e-25) + 30
-    env_real = 10*np.log10(((np.abs(yreal[:n])**2) / 50) + 1e-25) + 30
     if yideal is not None:
         assert len(yreal) == len(yideal)
         env_ideal = 10*np.log10(((np.abs(yideal[:n])**2) / 50) + 1e-25) + 30
-        env_ideal = 10*np.log10(((np.abs(yideal[:n])**2) / 50) + 1e-25) + 30
 
 
     if yideal is not None:
@@ -143,29 +108,7 @@ def power_envelope(yreal, yideal, Fs, overlay:False):
             ax[0].grid(True)
             ax[0].legend()
             ax[0].set_ylabel("|y| (dBm) ideal")
-        if not overlay:
-            _, ax = plt.subplots(2,1,sharex=True)
-            ax[0].plot(t, env_ideal,     label="float with ramp")
-            ax[0].grid(True)
-            ax[0].legend()
-            ax[0].set_ylabel("|y| (dBm) ideal")
 
-            ax[1].plot(t, env_real,     label="quantized with ramp")
-            ax[1].grid(True)
-            ax[1].legend()
-            ax[1].set_ylabel("|y| (dBm) quant")
-            ax[1].set_xlabel("Time (s)")
-            plt.tight_layout()
-            plt.show()
-        else:
-            plt.figure()
-            plt.plot(t, env_real, label="quantized with ramp")
-            plt.plot(t, env_ideal, label="float with ramp")
-            plt.grid(True)
-            plt.legend()
-            plt.ylabel("|y| (dBm)")
-            plt.xlabel("Time (s)")
-            plt.show()
             ax[1].plot(t, env_real,     label="quantized with ramp")
             ax[1].grid(True)
             ax[1].legend()
@@ -187,7 +130,6 @@ def power_envelope(yreal, yideal, Fs, overlay:False):
         plt.plot(t, env_real, label="quantized with ramp")
         plt.grid(True)
         plt.legend()
-        plt.ylabel("|y| (dBm) quant")
         plt.ylabel("|y| (dBm) quant")
         plt.xlabel("Time (s)")
         plt.show()

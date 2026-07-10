@@ -21,12 +21,7 @@ from typing import Literal
 from numpy import complex64, float64, uint8, zeros, \
     int64, concatenate, full, zeros_like, repeat, sin, cos, complex128, pad
 from numpy.random import Generator, PCG64
-from typing import Literal
-from numpy import complex64, float64, uint8, zeros, \
-    int64, concatenate, full, zeros_like, repeat, sin, cos, complex128, pad
-from numpy.random import Generator, PCG64
 from numpy.typing import NDArray
-from scipy.signal import bessel, sosfilt, sosfilt_zi
 from scipy.signal import bessel, sosfilt, sosfilt_zi
 
 from .tx_rx_utilities import power_ramping_float, \
@@ -47,7 +42,6 @@ HALF_BASEBAND_SAMPLING_FACTOR = TX_BB_SAMPLING_FACTOR // 2   # Half of the culma
 ZOH_DELAY = TRANSMIT_SIMULATION_SAMPLING_FACTOR // 2  # The sample delay arising from using ZOH
 
 # Internal sw simulator sampling rate, allows for capture of harmonics
-TRANSMIT_SIMULATION_SAMPLE_RATE = int(TX_BB_SAMPLING_FACTOR * TETRA_SYMBOL_RATE * TRANSMIT_SIMULATION_SAMPLING_FACTOR)
 TRANSMIT_SIMULATION_SAMPLE_RATE = int(TX_BB_SAMPLING_FACTOR * TETRA_SYMBOL_RATE * TRANSMIT_SIMULATION_SAMPLING_FACTOR)
 # Number of base sample rampe sames used to prepend and post bend burst data to clear FIR memory states
 BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT = 30
@@ -74,7 +68,6 @@ class RFTransmitter(ABC):
     between abstract methods.
     """
 
-    phase_reference: complex64
     phase_reference: complex64
 
     rrc_filter_state: NDArray[int64 | float64]
@@ -140,18 +133,12 @@ class RFTransmitter(ABC):
     @abstractmethod
     def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
                         ) -> tuple[NDArray[float64], NDArray[float64]]:
-    def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
-                        ) -> tuple[NDArray[float64], NDArray[float64]]:
         """
         Base abstract method that converts baseband processed data into dac code representation,
         """
         raise NotImplementedError
 
     @abstractmethod
-    def _analog_reconstruction(self, i_ch: NDArray[float64],
-                               q_ch: NDArray[float64],
-                               burst_ramp_periods: tuple[int, int]
-                               ) -> NDArray[complex128]:
     def _analog_reconstruction(self, i_ch: NDArray[float64],
                                q_ch: NDArray[float64],
                                burst_ramp_periods: tuple[int, int]
@@ -296,8 +283,6 @@ class RFTransmitter(ABC):
                        subslot_2_burst_ramp_periods: tuple[int, int] | None = None,
                        debug_return_stage: Literal["baseband"] | Literal["dac"] | Literal["tx"] = "tx"
                        ) -> tuple[NDArray[int64 | float64], NDArray[int64 | float64]] | NDArray[complex128]:
-                       debug_return_stage: Literal["baseband"] | Literal["dac"] | Literal["tx"] = "tx"
-                       ) -> tuple[NDArray[int64 | float64], NDArray[int64 | float64]] | NDArray[complex128]:
         """
         Performs the process of converting burst modulation bits into transmitted data, including baseband processing,
         DAC conversion, and analog reconstruction
@@ -357,19 +342,7 @@ class RFTransmitter(ABC):
 
         if debug_return_stage == "baseband":
             return i_temp_ramp, q_temp_ramp
-        if debug_return_stage == "baseband":
-            return i_temp_ramp, q_temp_ramp
 
-        # 6. Convert to DAC representation
-        i_float, q_float = self._dac_conversion(i_temp_ramp, q_temp_ramp)
-
-        if debug_return_stage == "dac":
-            return i_float, q_float
-        # 7. Create tx representation
-
-        rf_data = self._analog_reconstruction(i_float, q_float, burst_ramp_periods)
-
-        return rf_data
         # 6. Convert to DAC representation
         i_float, q_float = self._dac_conversion(i_temp_ramp, q_temp_ramp)
 
@@ -434,15 +407,12 @@ class RealTransmitter(RFTransmitter):
         # 1. Determine if prepending and/or postpending zeros to flush is required
         # start_offset = 0
         # end_offset = 0
-        # start_offset = 0
-        # end_offset = 0
         # 1a. continuous with previous burst consideration:
         if burst_ramp_periods[0] != 0:
             # Since we ramp up, we are not continuous with previous data, and must flush the FIRs with prepended zeros
             insulated_input_data = concatenate((full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64),
                                                symbol_complex_data))
-            # start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
             # start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
         else:
@@ -455,12 +425,7 @@ class RealTransmitter(RFTransmitter):
             insulated_input_data = concatenate((insulated_input_data, full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64)))
             # end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
-            # end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
-        # mag = sqrt(insulated_input_data.real[(start_offset):
-        #                                      len(insulated_input_data.real)-(end_offset)].astype(float64)**2
-        #            + insulated_input_data.imag[(start_offset):
-        #                                        len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
         # mag = sqrt(insulated_input_data.real[(start_offset):
         #                                      len(insulated_input_data.real)-(end_offset)].astype(float64)**2
         #            + insulated_input_data.imag[(start_offset):
@@ -519,7 +484,6 @@ class RealTransmitter(RFTransmitter):
             stage_9_symbols = stage_9_symbols[:, pre_trim:].copy()
 
         # TODO: Add runtime assertion if we go out of Fullscale for Q17
-        # TODO: Add runtime assertion if we go out of Fullscale for Q17
         # 9. Perform ramping on signal
         i_ramped_symbols, q_ramped_symbols = power_ramping_quantized(stage_9_symbols[0], stage_9_symbols[1],
                                                                      burst_ramp_periods)
@@ -529,10 +493,7 @@ class RealTransmitter(RFTransmitter):
 
     def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
                         ) -> tuple[NDArray[float64], NDArray[float64]]:
-    def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
-                        ) -> tuple[NDArray[float64], NDArray[float64]]:
         """
-        Converts baseband processed data into float representation with realistic dac non-linearity
         Converts baseband processed data into float representation with realistic dac non-linearity
         """
         # 1. Round Q17 data to 10bits for DAC
@@ -582,10 +543,6 @@ class RealTransmitter(RFTransmitter):
 
         return i_float_data, q_float_data
 
-    def _analog_reconstruction(self, i_ch: NDArray[float64],
-                               q_ch: NDArray[float64],
-                               burst_ramp_periods: tuple[int, int]
-                               ) -> NDArray[complex128]:
     def _analog_reconstruction(self, i_ch: NDArray[float64],
                                q_ch: NDArray[float64],
                                burst_ramp_periods: tuple[int, int]
@@ -682,15 +639,12 @@ class IdealTransmitter(RFTransmitter):
         # 1. Determine if prepending and/or postpending zeros to flush is required
         # start_offset = 0
         # end_offset = 0
-        # start_offset = 0
-        # end_offset = 0
         # 1a. continuous with previous burst consideration:
         if burst_ramp_periods[0] != 0:
             # Since we ramp up, we are not continuous with previous data, and must flush the FIRs with prepended zeros
             insulated_input_data = concatenate((full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64),
                                                symbol_complex_data))
-            # start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
             # start_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
         else:
@@ -703,18 +657,12 @@ class IdealTransmitter(RFTransmitter):
             insulated_input_data = concatenate((insulated_input_data, full(shape=BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT,
                                                fill_value=complex64(1 + 0j), dtype=complex64)))
             # end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
-            # end_offset = BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT
 
         # mag = sqrt(insulated_input_data.real[(start_offset):
         #                                      len(insulated_input_data.real)-(end_offset)].astype(float64)**2
         #            + insulated_input_data.imag[(start_offset):
         #                                        len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
-        # mag = sqrt(insulated_input_data.real[(start_offset):
-        #                                      len(insulated_input_data.real)-(end_offset)].astype(float64)**2
-        #            + insulated_input_data.imag[(start_offset):
-        #                                        len(insulated_input_data.imag)-(end_offset)].astype(float64)**2)
 
-        # print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
         # print("\nPre x8 upsampling - symbol mapper ", "peakFS: ", mag.max()/(1), "rmsFS: ", sqrt(mean(mag**2))/(1))
 
         # 2. Upsample by x8 with zero insertions, and quantize data to Q1.17 fixed format stored in float64
@@ -774,13 +722,9 @@ class IdealTransmitter(RFTransmitter):
                                                                  burst_ramp_periods)
         # mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
         # print("Post ramping ", "peakFS: ", mag.max(), "rmsFS: ", sqrt(mean(mag**2)))
-        # mag = sqrt(i_ramped_symbols.astype(float64)**2 + q_ramped_symbols.astype(float64)**2)
-        # print("Post ramping ", "peakFS: ", mag.max(), "rmsFS: ", sqrt(mean(mag**2)))
 
         return i_ramped_symbols, q_ramped_symbols
 
-    def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
-                        ) -> tuple[NDArray[float64], NDArray[float64]]:
     def _dac_conversion(self, i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64]
                         ) -> tuple[NDArray[float64], NDArray[float64]]:
         """
@@ -791,16 +735,7 @@ class IdealTransmitter(RFTransmitter):
         q_float_data = q_ch.copy().astype(float64)
 
         return i_float_data, q_float_data
-        # 1. We have no errors in te ideal form
-        i_float_data = i_ch.copy().astype(float64)
-        q_float_data = q_ch.copy().astype(float64)
 
-        return i_float_data, q_float_data
-
-    def _analog_reconstruction(self, i_ch: NDArray[float64],
-                               q_ch: NDArray[float64],
-                               burst_ramp_periods: tuple[int, int]
-                               ) -> NDArray[complex128]:
     def _analog_reconstruction(self, i_ch: NDArray[float64],
                                q_ch: NDArray[float64],
                                burst_ramp_periods: tuple[int, int]

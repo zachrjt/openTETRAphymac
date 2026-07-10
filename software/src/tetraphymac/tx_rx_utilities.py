@@ -36,34 +36,8 @@ TX_RRC_Q17_COEFFICIENTS = array(
      -4075, -3125, -1834, -510, 594, 1321, 1613, 1511, 1122, 592, 66, -342, -564, -589, -452, -221,
      26, 221, 319, 308, 204, 47, -115, -237, -292, -269, -181, -55, 74, 173, 222, 212, 153, 64, -30,
      -104, -141, -135, -93, -30, 37, 87, 109, 98, 60, 6], dtype=int64)
-    [6, 60, 98, 109, 87, 37, -30, -93, -135, -141, -104, -30, 64, 153, 212, 222, 173, 74, -55, -181,
-     -269, -292, -237, -115, 47, 204, 308, 319, 221, 26, -221, -452, -589, -564, -342, 66, 592, 1122,
-     1511, 1613, 1321, 594, -510, -1834, -3125, -4075, -4361, -3712, -1958, 923, 4783, 9308, 14052,
-     18499, 22130, 24505, 25332, 24505, 22130, 18499, 14052, 9308, 4783, 923, -1958, -3712, -4361,
-     -4075, -3125, -1834, -510, 594, 1321, 1613, 1511, 1122, 592, 66, -342, -564, -589, -452, -221,
-     26, 221, 319, 308, 204, 47, -115, -237, -292, -269, -181, -55, 74, 173, 222, 212, 153, 64, -30,
-     -104, -141, -135, -93, -30, 37, 87, 109, 98, 60, 6], dtype=int64)
 
 TX_RRC_FLOAT_COEFFICIENTS = array(
-    [4.6028807E-05, 4.5548688E-04, 7.4681803E-04, 8.2835555E-04, 6.6207664E-04, 2.7856705E-04,
-     -2.2615044E-04, -7.1247749E-04, -1.0332032E-03, -1.0747046E-03, -7.9234410E-04, -2.2970411E-04,
-     4.8512162E-04, 1.1672165E-03, 1.6210295E-03, 1.6939947E-03, 1.3234488E-03, 5.6322449E-04,
-     -4.1943332E-04, -1.3787722E-03, -2.0509101E-03, -2.2257303E-03, -1.8117221E-03, -8.7512349E-04,
-     3.6038237E-04, 1.5580310E-03, 2.3496656E-03, 2.4371645E-03, 1.6885466E-03, 2.0193664E-04,
-     -1.6844368E-03, -3.4467725E-03, -4.4899732E-03, -4.3008132E-03, -2.6063069E-03, 5.0252874E-04,
-     4.5184297E-03, 8.5619008E-03, 1.1526610E-02, 1.2308078E-02, 1.0075723E-02, 4.5330846E-03,
-     -3.8935654E-03, -1.3989874E-02, -2.3842659E-02, -3.1086056E-02, -3.3274468E-02, -2.8323304E-02,
-     -1.4939181E-02, 7.0435614E-03, 3.6491636E-02, 7.1012035E-02, 1.0720996E-01, 1.4113323E-01,
-     1.6883495E-01, 1.8696181E-01, 1.9326745E-01, 1.8696181E-01, 1.6883495E-01, 1.4113323E-01,
-     1.0720996E-01, 7.1012035E-02, 3.6491636E-02, 7.0435614E-03, -1.4939181E-02, -2.8323304E-02,
-     -3.3274468E-02, -3.1086056E-02, -2.3842659E-02, -1.3989874E-02, -3.8935654E-03, 4.5330846E-03,
-     1.0075723E-02, 1.2308078E-02, 1.1526610E-02, 8.5619008E-03, 4.5184297E-03, 5.0252874E-04,
-     -2.6063069E-03, -4.3008132E-03, -4.4899732E-03, -3.4467725E-03, -1.6844368E-03, 2.0193664E-04,
-     1.6885466E-03, 2.4371645E-03, 2.3496656E-03, 1.5580310E-03, 3.6038237E-04, -8.7512349E-04,
-     -1.8117221E-03, -2.2257303E-03, -2.0509101E-03, -1.3787722E-03, -4.1943332E-04, 5.6322449E-04,
-     1.3234488E-03, 1.6939947E-03, 1.6210295E-03, 1.1672165E-03, 4.8512162E-04, -2.2970411E-04,
-     -7.9234410E-04, -1.0747046E-03, -1.0332032E-03, -7.1247749E-04, -2.2615044E-04, 2.7856705E-04,
-     6.6207664E-04, 8.2835555E-04, 7.4681803E-04, 4.5548688E-04, 4.6028807E-05], dtype=float64)
     [4.6028807E-05, 4.5548688E-04, 7.4681803E-04, 8.2835555E-04, 6.6207664E-04, 2.7856705E-04,
      -2.2615044E-04, -7.1247749E-04, -1.0332032E-03, -1.0747046E-03, -7.9234410E-04, -2.2970411E-04,
      4.8512162E-04, 1.1672165E-03, 1.6210295E-03, 1.6939947E-03, 1.3234488E-03, 5.6322449E-04,
@@ -169,7 +143,7 @@ def generate_ramping_lut_quantized(n: int, sps: int = TX_BB_SAMPLING_FACTOR) -> 
     profile = 0.5 * (1.0 - cos(pi * k / (((n-2)*sps)-1)))
     lut = np_round(profile * (1 << NUMBER_OF_FRACTIONAL_BITS)).astype(int64)
     lut[0] = 0
-    lut[-1] = (1 << NUMBER_OF_FRACTIONAL_BITS)
+    lut[-1] = 1 << NUMBER_OF_FRACTIONAL_BITS
 
     # prepend and postpend the full symbol period 0 at the start and 1 at the end
     lut = concatenate((zeros(sps, dtype=int64), lut))
@@ -266,11 +240,8 @@ def save_burst_iqfile(input_data: NDArray[int64] | NDArray[float64] | NDArray[in
     elif input_data.dtype == int16:
         # format would be the 10bit dac values for the openTETRAphymac hw
         hw_dac_num = OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1
-        hw_dac_num = OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1
         if (temp.max() > ((1 << hw_dac_num)-1) or temp.min() < -(1 << hw_dac_num)):
             raise ValueError(f"Expected 10bit value with maximum + value of "
-                             f"{((1 << OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1)-1)}, found {np_max(temp)}")
-        temp = left_shift(temp, (dac_bits-OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER)).astype(int16)
                              f"{((1 << OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER-1)-1)}, found {np_max(temp)}")
         temp = left_shift(temp, (dac_bits-OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER)).astype(int16)
 
@@ -466,22 +437,8 @@ def assert_tail_is_zero(i_ch: NDArray[int64 | float64],
 
 def q17_rounding(accumulated_results: NDArray[int64],
                  rounding: Literal["rti"] | Literal["rtz"] | Literal['unbiased'] | Literal['truncate'] = "rti",
-def q17_rounding(accumulated_results: NDArray[int64],
-                 rounding: Literal["rti"] | Literal["rtz"] | Literal['unbiased'] | Literal['truncate'] = "rti",
                  right_shift_number: int = NUMBER_OF_FRACTIONAL_BITS):
     """
-    Performs fixed point rounding on int64 object data, typically used for rounding down convolution
-    accumulation result down to Q17 however can support rounding down to any number of bits.
-
-    :param accumulated_results: int64 data that is in 2's compliments to be rounded down
-    :type accumulated_results: NDArray[int64]
-    :param rounding: The type of rounding, "rti", "rtz" and "truncate are the supported biased methods for ECP5 DSP
-     blocks. Unbiased rounding is for sw usage and uses bankers rounding.
-    :type rounding: Literal["rti"] | Literal["rtz"] | Literal['unbiased'] | Literal['truncate']
-    :param right_shift_number: The number bits to round down, defaults to Q17 rounding e.g. 17
-    :type right_shift_number: int
-    """
-
     Performs fixed point rounding on int64 object data, typically used for rounding down convolution
     accumulation result down to Q17 however can support rounding down to any number of bits.
 
@@ -630,7 +587,6 @@ def dsp_fir_i_q_stream_convolve(i_ch: NDArray[int64 | float64], q_ch: NDArray[in
         # The new state of the FIR is the last n_taps-1 values of what was passed
         new_fir_state = input_data_extended[-(n_taps-1):].copy()
 
-        if i == 0:
         if i == 0:
             i_ch_output = output_accumulated_result
             i_fir_state = new_fir_state
