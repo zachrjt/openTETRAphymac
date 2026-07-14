@@ -338,8 +338,8 @@ class PNBandGenerator:
         self.upsample_fir_h = (self.factor *
                                h_interpolate_coef *
                                (1/np_sum(h_interpolate_coef)))
-        self.h_len = int(ceil((self.upsample_fir_h.size-1) / self.factor))
-        self.upsample_fir_mem = zeros(self.h_len, dtype=float64)
+        self.mem_len = int(ceil((self.upsample_fir_h.size-1) / self.factor))
+        self.upsample_fir_mem = zeros(self.mem_len, dtype=float64)
 
     def warmup(self, n_samp: int) -> NDArray[float64]:
         """
@@ -355,12 +355,12 @@ class PNBandGenerator:
         :return: Returns self.factor * n_samp samples of coloured noise at self.f_sim rate, typically discarded.
         :rtype: NDArray[float64]
         """
-        temp = empty(shape=(n_samp + self.h_len), dtype=float64)
+        temp = zeros(shape=(n_samp + self.mem_len), dtype=float64)
         # Warmup noise generator fir memory
-        temp[self.h_len:] = self.pn_gen.next(n_samp)
-        self.upsample_fir_mem = temp[-self.h_len:]
+        temp[self.mem_len:] = self.pn_gen.next(n_samp)
+        self.upsample_fir_mem = temp[-self.mem_len:]
         y = sp_upfirdn(self.upsample_fir_h, temp, up=self.factor)
-        return y[self.h_len*self.factor: self.h_len*self.factor + n_samp*self.factor]
+        return y[self.mem_len*self.factor: self.mem_len*self.factor + n_samp*self.factor]
 
     def generate(self, n_samp: int) -> NDArray[float64]:
         """
@@ -373,14 +373,16 @@ class PNBandGenerator:
         :return: Returns self.factor * n_samp samples of coloured noise at self.f_sim rate.
         :rtype: NDArray[float64]
         """
-        samples = empty(shape=(n_samp + self.h_len), dtype=float64)
-        samples[:self.h_len] = self.upsample_fir_mem
-        samples[self.h_len:] = self.pn_gen.next(n_samp)
+        samples = empty(shape=(n_samp + self.mem_len), dtype=float64)
+        samples[:self.mem_len] = self.upsample_fir_mem
+        samples[self.mem_len:] = self.pn_gen.next(n_samp)
+        self.upsample_fir_mem = samples[-self.mem_len:]
         # Using scipy upfirdn as polyphase filter to greatly (150x) reduce number of calculations compared to standard
         # filtering or FFT filtering for these filter sizes
         pn_samples = sp_upfirdn(self.upsample_fir_h, samples, up=self.factor)
-        self.upsample_fir_mem = samples[-self.h_len:]
-        return pn_samples[self.h_len*self.factor: self.h_len*self.factor + n_samp*self.factor]
+        # It should be noted that this inccurs a delay of (self.upsample_fir_h.size - 1) //2
+        # However, because the input signal is stocastic, a delay does not matter for our purposes
+        return pn_samples[self.mem_len*self.factor: self.mem_len*self.factor + n_samp*self.factor]
 
 
 class PhaseNoiseSimulator:
@@ -468,3 +470,5 @@ class PhaseNoiseSimulator:
 
         # apply phase noise to signal, using vector multiplication
         return (signal_block.reshape(-1) * exp(1j * pn_noise)).reshape(signal_block.shape)
+
+###################################################################################################
