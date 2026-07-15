@@ -81,7 +81,7 @@ def loglog_interpolate(f_mask: list[float64] | NDArray[float64], dbc_mask: list[
     return output_log_vals
 
 
-def gen_phase_noise_mask_fir(mask: dict[str, Tuple[float | float64, float | float64]], f_s: float64 | float,
+def gen_phase_noise_mask_fir(mask: dict[str, Tuple[float, float]], f_s: float,
                              low_factor: int = 150, high_factor: int = 4,
                              low_n_h: int = 8192, high_n_h: int = 2048):
     """
@@ -107,7 +107,7 @@ def gen_phase_noise_mask_fir(mask: dict[str, Tuple[float | float64, float | floa
     and -101.0 is the single sided PSD in units of dBc/Hz
     :param f_s: Phase Noise simulation frequency in Hz or samples/sec
     for the evaluation points in f_points
-    :type f_s: float64 | float
+    :type f_s: float
     :param low_factor: The decimation factor of the low band fir section compared to f_s, factor of f_s and 116,320
     :type low_factor: int
     :param high_factor: The decimation factor of the high band fir section compared to f_s, factor of f_s and 116,320
@@ -230,6 +230,19 @@ class ColouredNoiseGenerator:
     it through a FIR filter set during initialzation. It can be used for low, high, or mid band filtering for multi-band
     interpolated phase noise simulation.
     """
+    h_coef: NDArray[float64]
+    h_len: int
+    rng_gen: Generator
+    nfft: int
+
+    h: NDArray[complex128]
+    hist: NDArray[float64]
+
+    max_block_size: int
+    x: NDArray[float64]
+    x_f: NDArray[complex128]
+    y: NDArray[float64]
+
     def __init__(self, h_coef: NDArray[float64], nfft: int, rng_gen: Generator):
         """
         Initilizes the ColouredNoiseGenerator instance, does not perform any "warmup" of FIR memory, expects this to be
@@ -310,7 +323,17 @@ class PNBandGenerator:
     Its' primary method is generate(n_samp), which generates n_samp * self.sample_rate_factor number of coloured noise
     samples at self.f_sim[ulation] rate.
     """
-    def __init__(self, f_sim: float64 | float, sample_rate_factor: int, h_pn_coef: NDArray[float64],
+    f_sim: float
+    factor: int
+    f_gen: float
+    rng_gen: Generator
+    pn_gen: ColouredNoiseGenerator
+
+    upsample_fir_h: NDArray[float64]
+    mem_len: int
+    upsample_fir_mem: NDArray[float64]
+
+    def __init__(self, f_sim: float, sample_rate_factor: int, h_pn_coef: NDArray[float64],
                  h_interpolate_coef: NDArray[float64], rng_gen: Generator | None):
         """
         Initilizes the PNBandGenerator instance, does not perform any "warmup" of FIR memory, expects this to be
@@ -318,7 +341,7 @@ class PNBandGenerator:
 
         :param self: PNBandGenerator instance
         :param f_sim: Simulation rate in units of Hz or samples/s
-        :type f_sim: float64 | float
+        :type f_sim: float
         :param sample_rate_factor: The upsample factor up to to f_sim, must be factor of f_sim and 116,320
         :type sample_rate_factor: int
         :param h_pn_coef: FIR tap coefficents used for generating coloured noise at lower rate
@@ -329,9 +352,9 @@ class PNBandGenerator:
         :param rng_gen: FIR tap coefficents used for generating coloured noise
         :type rng_gen: Generator, a numpy.random.Generator instance of any type, PCG64 recommended
         """
-        self.fs_sig = f_sim
+        self.f_sim = f_sim
         self.factor = sample_rate_factor
-        self.fs = f_sim / sample_rate_factor
+        self.f_gen = f_sim / sample_rate_factor
         self.rng_gen = Generator(PCG64()) if rng_gen is None else rng_gen
 
         self.pn_gen = ColouredNoiseGenerator(h_pn_coef, (h_pn_coef.size * 4), self.rng_gen)
@@ -406,6 +429,22 @@ class PhaseNoiseSimulator:
     apply the resulting phase noise to an passed input signal without using the small angle approxmate, i.e, as
     x(t) * exp(1j * phi(t)), where phi(t) is the coloured noise random process following the target SSB PSD mask.
     """
+    f_sim: float
+
+    low_factor: int
+    low_n_h: int
+    low_h_coef: NDArray[float64]
+    upsample_fir_low_h: NDArray[float64]
+    low_band_gen: PNBandGenerator
+
+    high_factor: int
+    high_n_h: int
+    high_h_coef: NDArray[float64]
+    upsample_fir_high_h: NDArray[float64]
+    high_band_gen: PNBandGenerator
+
+    # TODO: Rewrite to handle arbitrary sized blocks of signal instead of fixed burst timeslot size using buffers
+
     def __init__(self, f_sim: int, ssb_mask: dict[str, Tuple[float, float]],
                  rng_gen_low: Generator | None = None, rng_gen_high: Generator | None = None):
         """
@@ -414,7 +453,7 @@ class PhaseNoiseSimulator:
 
         :param self: PhaseNoiseSimulator instance
         :param f_sim: Simulation rate in units of Hz or samples/s
-        :type f_sim: float64 | float
+        :type f_sim: int
         :param ssb_mask: Target SSB phase noise mask dict that contains tuples of (freq. offset in Hz, ssb in dBc/Hz)
         :type ssb_mask: dict[str, Tuple[float, float]] Example: {"10Hz": (10.0, -101.0), ...} where 10.0 is the freq.
         in units of Hz and -101.0 is the single sided PSD in units of dBc/Hz
@@ -423,28 +462,28 @@ class PhaseNoiseSimulator:
         :param rng_gen_high: FIR tap coefficents used for generating coloured noise
         :type rng_gen_high: Generator, a numpy.random.Generator instance of any type, PCG64 recommended
         """
-        self.fs_sig = float64(f_sim)
+        self.f_sim = float(f_sim)
         self.low_factor = 150
         self.high_factor = 4
         self.low_n_h = 2**14
         self.high_n_h = 2**12
 
         # Create FIR coefficents for band generators and unsampling filters
-        self.low_h_coef, self.high_h_coef = gen_phase_noise_mask_fir(ssb_mask, self.fs_sig,
+        self.low_h_coef, self.high_h_coef = gen_phase_noise_mask_fir(ssb_mask, self.f_sim,
                                                                      self.low_factor, self.high_factor,
                                                                      self.low_n_h, self.high_n_h)
 
-        self.upsample_fir_low_h = sp_remez(4096, [0, 12E3, 40E3, self.fs_sig/2], [1, 0], fs=self.fs_sig)
-        self.upsample_fir_high_h = sp_remez(512, [0, 1E6, 1.2E6, self.fs_sig/2], [1, 0], fs=self.fs_sig)
+        self.upsample_fir_low_h = sp_remez(4096, [0, 12E3, 40E3, self.f_sim/2], [1, 0], fs=self.f_sim)
+        self.upsample_fir_high_h = sp_remez(512, [0, 1E6, 1.2E6, self.f_sim/2], [1, 0], fs=self.f_sim)
 
         # Initilize and warmup low and high band phase noise generators
-        self.low_band_gen = PNBandGenerator(self.fs_sig, self.low_factor, self.low_h_coef,
+        self.low_band_gen = PNBandGenerator(self.f_sim, self.low_factor, self.low_h_coef,
                                             self.upsample_fir_low_h, rng_gen_low)
         self.low_band_gen.warmup(5*self.low_h_coef.size)
 
         # print(f"h_low: {np_sum(self.low_h_coef**2)} vs sample variance {np_var(self.low_band_gen.generate(2**10))}")
 
-        self.high_band_gen = PNBandGenerator(self.fs_sig, self.high_factor, self.high_h_coef,
+        self.high_band_gen = PNBandGenerator(self.f_sim, self.high_factor, self.high_h_coef,
                                              self.upsample_fir_high_h, rng_gen_high)
         self.high_band_gen.warmup(5*self.high_h_coef.size)
 

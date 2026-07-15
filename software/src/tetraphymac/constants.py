@@ -154,6 +154,14 @@ class TetraPropagationModels(str, Enum):
     EQUALIZATION_TEST = "EQ"
 
 
+# Velocities (speeds actually) are only defined for STATIC, TU50, HT200, EQ200, other models are included here but don't
+# have a default velocity defined in the standard because they arent used for performance requirements
+TETRA_DEFAULT_MODEL_VELOCITIES_KPH = {TetraPropagationModels.STATIC: 0.0,
+                                      TetraPropagationModels.TYPICAL_URBAN: 50.0,
+                                      TetraPropagationModels.HILLY_TERRAIN: 200.0,
+                                      TetraPropagationModels.EQUALIZATION_TEST: 200.0}
+
+
 @dataclass(frozen=True)
 class PropagationTapParameters:
     delay: float
@@ -191,5 +199,7 @@ TETRA_PROPAGATION_MODELS = {
               PropagationTapParameters(73.2E-6, 10**(-10.2/20), TetraTapGainProcess.CLASS_PROCESS),
               PropagationTapParameters(99.3E-6, 10**(-16.0/20), TetraTapGainProcess.CLASS_PROCESS)))}
 
+
+TETRA_FADING_SIMULATION_RATE = int(10_000)
 
 #############################################
