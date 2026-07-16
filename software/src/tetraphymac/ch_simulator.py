@@ -4,18 +4,19 @@ reciever.
 """
 from typing import Tuple
 
-from numpy import round, zeros, float64, complex128, pi, arange, cos, sin, sum as np_sum, ceil, empty, int64, \
-                  sqrt as np_sqrt, max as np_max
+from numpy import round, zeros, float64, complex128, pi, arange, cos, sin, sum as np_sum, empty, int64, \
+                  sqrt as np_sqrt
 from numpy.typing import NDArray
 from numpy.random import SeedSequence, Generator, PCG64
 
-from scipy.signal import remez as sp_remez, upfirdn as sp_upfirdn
+from scipy.signal import remez as sp_remez, upfirdn as sp_upfirdn, lfilter
 from scipy.constants import c as C_SPEED_OF_LIGHT
 
 from .constants import TETRA_PROPAGATION_MODELS, TetraPropagationModels, PropagationTapParameters, \
                        TetraTapGainProcess, PropagationModelParameters, OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY, \
                        TETRA_DEFAULT_MODEL_VELOCITIES_KPH, TETRA_FADING_SIMULATION_RATE
 from .transmitter import TRANSMIT_SIMULATION_SAMPLE_RATE
+
 
 ###################################################################################################
 
@@ -94,7 +95,7 @@ class RayleighFadingSimulator:
     _interp_buffer: NDArray[complex128]
     _interp_buffer_len: int
 
-    def __init__(self, f_sim: int, f_fade_sim: int, f_doppler: float, seed_seq: SeedSequence | None, m_order: int = 3):
+    def __init__(self, f_sim: int, f_doppler: float, seed_seq: SeedSequence | None, m_order: int = 264):
         # Handle order checks and time tracker
         self.m = m_order
         if m_order < 8:
@@ -106,17 +107,13 @@ class RayleighFadingSimulator:
 
         # Handle frequency checks
         self.wd = (abs(f_doppler) * 2 * pi)
-        self.f_fade_sim = f_fade_sim
-        if f_fade_sim/2 < f_doppler:
-            raise ValueError(f"RayleighFadingSimulator sample rate: {f_fade_sim} is too low for doppler shift of:"
-                             f" {f_doppler}")
-        elif f_sim % f_fade_sim != 0:
-            raise ValueError(f"Passed RayleighFadingSimulation sample rate: {f_fade_sim}, not a factor of"
-                             f" passed simulation rate: {f_sim}")
-        elif f_sim < f_fade_sim:
-            raise ValueError(f"Passed RayleighFadingSimulation sample rate: {f_fade_sim}, is larger than"
-                             f" passed simulation rate: {f_sim}")
-        self.upsample_factor = f_sim // f_fade_sim
+        self.f_fade_sim = TETRA_FADING_SIMULATION_RATE
+        # Might handle variable simulation rates for the fading sim in the future but unlikely
+        if f_sim != TRANSMIT_SIMULATION_SAMPLE_RATE:
+            raise ValueError(f"Passed simulation sample rate: {f_sim} is not the expected"
+                             f" rate of {TRANSMIT_SIMULATION_SAMPLE_RATE}")
+        self.total_upsample = 144
+        self.stage_upsample = 12
 
         # Generate random phi, psi, theta values
         if seed_seq is None:
@@ -138,20 +135,9 @@ class RayleighFadingSimulator:
         self.cos_phase_coef = (self.wd/self.f_fade_sim) * cos(self.alpha_n)[:, None]
         self.sin_phase_coef = (self.wd/self.f_fade_sim) * sin(self.alpha_n)[:, None]
 
-        # Generate interpolation filter, and initialize interpolation memory
-        h = sp_remez(8192, [0, 2800.0, f_fade_sim, f_sim/2], [1, 0], weight=[1, 100], fs=f_sim)
-        dc_gain = np_sum(h)
-        h *= (self.upsample_factor / dc_gain)
-        self._h_interp = h.astype(complex128)
+        self._initialize_filters(f_sim)
 
-        self._mem_len = int(ceil((self._h_interp.size-1) / self.upsample_factor))
-        self._h_interp_mem = empty(shape=self._mem_len, dtype=complex128)
-        self._interp_buffer = empty(self.upsample_factor, dtype=complex128)
-        self._interp_buffer_len = 0
-        # Generate warmup history for interpolation memory
-        self._h_interp_mem = self.evaluate(self._mem_len, start_index=-self._mem_len)
-
-    def evaluate(self, n_samples: int, start_index: int | None = None) -> NDArray[complex128]:
+    def _generate(self, n_samples: int, start_index: int | None = None) -> NDArray[complex128]:
         # Z (Result) = a + jb
         # Generate phase time-increment values
         idx = (self._sample_idx if start_index is None else start_index) + arange(n_samples, dtype=float64)
@@ -164,42 +150,103 @@ class RayleighFadingSimulator:
         z = (np_sqrt(2/self.m))*(a + 1j*b)
         return z
 
-    def apply_complex_gain(self, signal: NDArray[complex128]) -> NDArray[complex128]:
+    def _initialize_filters(self, f_sim: int):
+        # Generate interpolation filters, and initialize interpolation memories
+        f_mid_rate = f_sim // self.stage_upsample
+        h1 = sp_remez(4096, [0, 17_500, 20_000, f_mid_rate/2], [1, 0], weight=[1, 100], fs=f_mid_rate)
+        h1 *= (self.stage_upsample / np_sum(h1))
+        self._h1_interp = h1.astype(complex128)
+
+        h2 = sp_remez(4096, [0, 48_000, 80_000, f_sim/2], [1, 0], weight=[1, 100], fs=f_sim)
+        h2 *= (self.stage_upsample / np_sum(h2))
+        self._h2_interp = h2.astype(complex128)
+
+        h3 = sp_remez(46, [0, 30_000, 900_000, f_sim/2], [1, 0], weight=[1, 100], fs=f_sim)
+        h3 *= (1 / np_sum(h3))
+        self._h3_cleanup = h3.astype(complex128)
+
+        # Calculate filter delay, allocate filter memory
+        self._cascade_group_delay = int(((self._h1_interp.size - 1) / 2) * self.stage_upsample
+                                        + ((self._h2_interp.size - 1) / 2)
+                                        + ((self._h3_cleanup.size - 1) / 2))
+
+        gd_base = self._cascade_group_delay // self.total_upsample
+        self._h1_mem = zeros(shape=(3*gd_base), dtype=complex128)
+
+        # Compensate for group delay such that when .apply_complex_gain() is called 1st time, samples start at t=0
+        # This is not strictly needed but helps if output is compared to external code with same seed and implementation
+        self._sample_idx = int64(gd_base)
+        # Allocate interpolation buffer, note max used size is self.upsample_factor - 1
+        self._buffer = zeros(self.total_upsample - 1, dtype=complex128)
+        self._buffer_len = 0
+        # Generate warmup samples
+        warmup = 32768
+        warmup_samples = self._generate(warmup, (gd_base-warmup))
+        _ = self._interpolate(warmup_samples)
+
+    def _interpolate(self, fade_samples: NDArray[complex128], repeatable: bool = False):
+        n_samples = fade_samples.size
+        x = empty(shape=(self._h1_mem.size + n_samples), dtype=complex128)
+        x[:self._h1_mem.size] = self._h1_mem
+        x[self._h1_mem.size:] = fade_samples
+
+        # Update filt memory
+        if not repeatable:
+            self._h1_mem = x[-self._h1_mem.size:]
+        # Stage 1 interpolation
+        y1 = sp_upfirdn(h=self._h1_interp, x=x, up=self.stage_upsample)
+        # Stage 2 interpolation
+        y2 = sp_upfirdn(h=self._h2_interp, x=y1, up=self.stage_upsample)
+        # Stage 3 cleanup
+        y3 = lfilter(self._h3_cleanup, [1.0], y2)
+
+        # Remove front pad which has filter transisents in it
+        start = self._h1_mem.size * self.total_upsample
+        stop = start + (n_samples * self.total_upsample)
+        return y3[start:stop]
+
+    def apply_complex_gain(self, signal: NDArray[complex128], repeatable: bool = False) -> NDArray[complex128]:
+        """
+        Generates Rayleigh fading process complex gain via sum of sinusoids method at lower rate, then interpolates up
+        to f_sim sample rate of the passed input signal and apply the complex gain to input parameter signal.
+
+        Note: because of interpolation, finite leakage of the doppler spectrum occurs at frequnecy multiples of
+        TETRA_FADING_SIMULATION_RATE (80khz), rejection of leakage from interpolation is min. 190dB within 900khz,
+        and 150dB at most at n*960khz spectral images.
+
+        :param signal: Input array of complex128 data sampled at the f_sim rate passed to object at initilization
+        :type signal: NDArray[complex128]
+        :param repeatable: If True, does not increment sample counter of gain generation, therefore for the next same
+        sized input signal repeats the same complex gain profile, repeats for next call as long as set to True
+        :return: Returns input signal.size number samples multiplied by complex gain as: signal * z(t)
+        :rtype: NDArray[complex128]
+        """
         # Determine how many base rate samples are required, taking into account leftover data in buffer
-        needed_samples = np_max(0, signal.size - self._interp_buffer_len)
+        needed_samples = max(0, signal.size - self._buffer_len)
         # integer ceiling form, instead of int(ceil(float))
-        n_samples = (needed_samples + self.upsample_factor - 1) // self.upsample_factor
-        k_samples = needed_samples
+        n_samples = (needed_samples + self.total_upsample - 1) // self.total_upsample
         if n_samples == 0:
-            leftover_samples = self._interp_buffer_len - signal.size
+            leftover_samples = self._buffer_len - signal.size
         else:
-            leftover_samples = n_samples * self.upsample_factor - k_samples
-        # Generate base rate samples of the process
-        fifo_array = empty(shape=(signal.size), dtype=complex128)
-        fifo_array[:self._interp_buffer_len] = self._interp_buffer[:self._interp_buffer_len]
+            leftover_samples = n_samples * self.total_upsample - needed_samples
+
+        out_array = empty(shape=(signal.size), dtype=complex128)
+        out_array[:self._buffer_len] = self._buffer[:self._buffer_len]
+
         if n_samples != 0:
-            x = empty(shape=(self._mem_len + n_samples), dtype=complex128)
-            x[:self._mem_len] = self._h_interp_mem
-            x[self._mem_len:] = self.evaluate(n_samples)
-            self._h_interp_mem = x[-self._mem_len:]
-            # Interpolate up
-            y = sp_upfirdn(h=self._h_interp, x=x, up=self.upsample_factor)
-
-            # Discard the initial transisent/memory
-            y = y[self._mem_len * self.upsample_factor:
-                  self._mem_len*self.upsample_factor + n_samples*self.upsample_factor]
-            # Copy into buffer any leftover data
-            fifo_array[self._interp_buffer_len:] = y[:k_samples]
-            self._interp_buffer[:leftover_samples] = y[k_samples:]
-
-        # Handle buffer, must shuffle buffer samples around if we dont use the entire buffer
-        if n_samples == 0:
-            self._interp_buffer[:leftover_samples] = self._interp_buffer[signal.size: self._interp_buffer_len]
-            self._interp_buffer_len = leftover_samples
+            # Generate base rate samples of the process
+            samples = self._generate(n_samples, int(self._sample_idx) if repeatable else None)
+            y = self._interpolate(samples, repeatable)
+            out_array[self._buffer_len:] = y[:needed_samples]
+            if not repeatable:
+                self._buffer[:leftover_samples] = y[needed_samples:]
+                self._buffer_len = leftover_samples
         else:
-            self._interp_buffer_len = leftover_samples
+            if not repeatable:
+                self._buffer[:leftover_samples] = self._buffer[signal.size: self._buffer_len]
+                self._buffer_len = leftover_samples
 
-        return signal * fifo_array
+        return signal * out_array
 
 ###################################################################################################
 
@@ -243,12 +290,10 @@ class PropagationTap:
                 self.rayleigh_process = None
                 self.static_process_present = True
             case TetraTapGainProcess.CLASS_PROCESS:
-                self.rayleigh_process = RayleighFadingSimulator(f_sim=f_sim, f_fade_sim=TETRA_FADING_SIMULATION_RATE,
-                                                                f_doppler=f_doppler, seed_seq=seed_seq)
+                self.rayleigh_process = RayleighFadingSimulator(f_sim=f_sim, f_doppler=f_doppler, seed_seq=seed_seq)
                 self.static_process_present = False
             case TetraTapGainProcess.RICE_PROCESS:
-                self.rayleigh_process = RayleighFadingSimulator(f_sim=f_sim, f_fade_sim=TETRA_FADING_SIMULATION_RATE,
-                                                                f_doppler=f_doppler, seed_seq=seed_seq)
+                self.rayleigh_process = RayleighFadingSimulator(f_sim=f_sim, f_doppler=f_doppler, seed_seq=seed_seq)
                 self.static_process_present = True
 
 ###################################################################################################

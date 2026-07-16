@@ -200,6 +200,6 @@ TETRA_PROPAGATION_MODELS = {
               PropagationTapParameters(99.3E-6, 10**(-16.0/20), TetraTapGainProcess.CLASS_PROCESS)))}
 
 
-TETRA_FADING_SIMULATION_RATE = int(10_000)
+TETRA_FADING_SIMULATION_RATE = int(80_000)
 
 #############################################
