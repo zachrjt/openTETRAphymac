@@ -202,4 +202,14 @@ TETRA_PROPAGATION_MODELS = {
 
 TETRA_FADING_SIMULATION_RATE = int(80_000)
 
+
+# Enum constant class used to specify the nature of the burst/block being handled
+# by PropagationTap
+class StreamPosition(str, Enum):
+    ISOLATED_BURST = "ISOLATED"
+    START_BURST = "START"
+    MIDDLE_BURST = "MIDDLE"
+    END_BURST = "END"
+
+
 #############################################

@@ -2,10 +2,10 @@
 ch_simulator.py contains functions and classes used to simulate channels between a MS/BS transmitter and a MS/BS
 reciever.
 """
-from typing import Tuple
+from typing import Tuple, Literal
 from abc import ABC, abstractmethod
 from numpy import round, zeros, float64, complex128, pi, arange, cos, sin, sum as np_sum, empty, int64, \
-                  sqrt as np_sqrt, floor, isclose, exp, full
+                  sqrt as np_sqrt, isclose, exp, full, concatenate
 from numpy.typing import NDArray
 from numpy.random import SeedSequence, Generator, PCG64
 
@@ -14,7 +14,7 @@ from scipy.constants import c as C_SPEED_OF_LIGHT
 
 from .constants import TETRA_PROPAGATION_MODELS, TetraPropagationModels, PropagationTapParameters, \
                        TetraTapGainProcess, PropagationModelParameters, OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY, \
-                       TETRA_DEFAULT_MODEL_VELOCITIES_KPH, TETRA_FADING_SIMULATION_RATE
+                       TETRA_DEFAULT_MODEL_VELOCITIES_KPH, TETRA_FADING_SIMULATION_RATE, StreamPosition
 from .transmitter import TRANSMIT_SIMULATION_SAMPLE_RATE
 
 
@@ -28,6 +28,7 @@ class ComplexGainProcess(ABC):
     them, if the process can be generated deterministically, then repeatable control wether or not subsequent calls
     will generate the same complex gain values as the current call.
     """
+
     @abstractmethod
     def next(self, n_samples: int, repeatable: bool = False) -> NDArray[complex128]:
         """
@@ -117,9 +118,8 @@ class RayleighProcess(ComplexGainProcess):
     and time delay w.r.t. to an indepedently generated sequence generated with the same base seed sequence.
 
 
-    Its' primary method is _apply_complex_gain(signal), which when passed a signal of type NDarray[complex128] at rate
-    f_sim, generates and interpolates a sufficent number of complex gain samples at f_sim rate and applies them,
-    returning the product of the original signal and the complex gain/fade profile. It can also be configured to allow
+    Its' primary method is .next(n_samples), generates and interpolates a n_samples of complex gain samples at f_sim
+    rate and returns the complex gain/fade samples. It can also be configured to allow
     for subsequent repitition of the sample complex gain profile, easing scenario testing by remove the need to
     initialize multiple propagation taps/models with the same seed.
     """
@@ -512,12 +512,13 @@ class PropagationTap:
     delay: float
     int_delay: int
     h_delay_fir: NDArray[complex128] | None
-    h_delay_fir_int_delay: int
     scale: float
+    prime_fir_state: bool
+    required_history: int
 
     tap_gain_process: TetraTapGainProcess
     rayleigh_process: RayleighProcess | None
-    static_process_present: bool
+    static_process: StaticProcess | None
 
     def __init__(self, f_sim: int, f_doppler: float, tap_data: PropagationTapParameters, seed_seq: SeedSequence):
 
@@ -526,9 +527,15 @@ class PropagationTap:
         self.delay = abs(tap_data.delay)
         self.int_delay, self.h_delay_fir = _calculate_delay_parameters(f_sim, self.delay, 3)
         if self.h_delay_fir is not None:
-            self.h_delay_fir_int_delay = int(floor((self.h_delay_fir.size - 1) / 2))
+            self.h_zi = zeros(shape=self.h_delay_fir.size - 1, dtype=complex128)
+            self.required_history = self.int_delay + (self.h_delay_fir.size - 1)
         else:
-            self.h_delay_fir_int_delay = 0
+            self.h_zi = zeros(shape=1, dtype=complex128)
+            self.required_history = self.int_delay
+
+        self.prime_fir_state = True
+        self.int_delay_buffer = zeros(shape=self.int_delay, dtype=complex128)
+
         # 2. Handle ampltiude scaling
         self.scale = tap_data.amplitude_scale
         if self.scale < 0 or self.scale > 1:
@@ -549,21 +556,153 @@ class PropagationTap:
         match self.tap_gain_process:
             case TetraTapGainProcess.STATIC_PROCESS:
                 self.rayleigh_process = None
-                self.static_process_present = True
+                self.static_process = StaticProcess(f_sim=f_sim, f_doppler=f_doppler)
             case TetraTapGainProcess.CLASS_PROCESS:
                 self.rayleigh_process = RayleighProcess(f_sim=f_sim, f_doppler=f_doppler, seed_seq=seed_seq)
-                self.static_process_present = False
+                self.static_process = None
             case TetraTapGainProcess.RICE_PROCESS:
                 self.rayleigh_process = RayleighProcess(f_sim=f_sim, f_doppler=f_doppler, seed_seq=seed_seq)
-                self.static_process_present = True
+                # TETRA 300-392 V2.4.2 defines RICE as combination of both Rayleigh/CLASS and Static, but
+                # with Static process having a doppler shift of 0.7 * f_doppler
+                self.static_process = StaticProcess(f_sim=f_sim, f_doppler=(0.7 * f_doppler))
 
-    def process_burst(self, signal: NDArray[complex128], mode: str = "",
-                      repeatable: bool = False) -> NDArray[complex128]:
-        # If extend is True, then we return full signal with delay instead of truncating to signal.size length of burst
+    def gain_handler(self, n_samples: int, repeatable: bool = False) -> NDArray[complex128]:
+        if self.static_process is not None and self.rayleigh_process is not None:
+            # RICE fading
+            # TETRA 300-392 V2.4.2 defines RICE as combination of both Rayleigh/CLASS and Static, but
+            # with Static process having a doppler shift of 0.7 * f_doppler
+            gain = self.rayleigh_process.next(n_samples=n_samples, repeatable=repeatable) * (1/np_sqrt(2))
+            gain += self.static_process.next(n_samples=n_samples, repeatable=repeatable) * (1/np_sqrt(2))
+        elif self.rayleigh_process is not None and self.static_process is None:
+            # Rayleigh/CLASS fading
+            gain = self.rayleigh_process.next(n_samples=n_samples, repeatable=repeatable)
+        elif self.static_process is not None:
+            # Static Fading
+            gain = self.static_process.next(n_samples=n_samples, repeatable=repeatable)
+        else:
+            gain = full(shape=n_samples, fill_value=(1.0 + 0.0j), dtype=complex128)
 
-        # 1. Allocate return data
-        out = empty(shape=(signal.size + self.int_delay), dtype=complex128)
-        return out
+        return gain
+
+    def reset_state(self):
+        self.int_delay_buffer[:] = 0.0 + 0.0j
+
+        if self.h_delay_fir is not None:
+            self.h_zi[:] = 0.0 + 0.0j
+
+        self.prime_fir_state = True
+
+    def null(self, n_samples: int):
+        # Null means we are not transmitting anything but want timing to continue
+        # thus insert zeros to flush the memory of process and increment processes
+        # if we have no samples in memory, we can tell the processes to increment
+        # their process trackers internally but without computation to reduce complexity
+        pass
+
+    def process(self, samples: NDArray[complex128],
+                current_length: int,
+                stream_position: StreamPosition,
+                mode: Literal["same", "full"] = "same",
+                repeatable: bool = False) -> NDArray[complex128]:
+        if current_length > samples.size:
+            raise ValueError(f"Insufficent additional samples were passed, recieved:"
+                             f" {samples.size}, excpected {current_length} based"
+                             " on `current_length` argument.")
+        # 1. Calculate size, allocate, and fill input array to filter
+        # Calculate the flush pads at start and end
+        startup_padding = 0
+        lookahead_length = 0
+        if self.prime_fir_state:
+            startup_padding += (0 if self.h_delay_fir is None else self.h_delay_fir.size - 1)
+
+        if mode == "full":
+            required_extra_samples = self.required_history - self.int_delay
+            lookahead_length += self.required_history
+            if stream_position in (StreamPosition.START_BURST, StreamPosition.MIDDLE_BURST):
+                if (samples.size - current_length) < required_extra_samples:
+                    raise ValueError(f"Insufficent additional samples were passed for"
+                                     f" stream burst type: {stream_position} in mode: {mode},"
+                                     f" expected: {required_extra_samples}, got:"
+                                     f" {(samples.size - current_length)}")
+
+        input_size = startup_padding + current_length + lookahead_length
+        x = zeros(shape=input_size, dtype=complex128)
+        start = 0 + startup_padding
+
+        # 2. Handle the integer delay buffer
+        x[start: start + self.int_delay] = self.int_delay_buffer[:]
+        start += self.int_delay
+        if not repeatable:
+            if stream_position in (StreamPosition.START_BURST, StreamPosition.MIDDLE_BURST):
+                # We dont want our lookahead portion in memory
+                # instead we want to keep the memory as if we were in "same" mode
+                self.int_delay_buffer[:] = samples[-self.required_history: -(self.required_history - self.int_delay)]
+            else:
+                self.int_delay_buffer[:] = samples[-self.int_delay:]
+
+        # 3. Add current_samples
+        # The integer delay buffer already contributes `int_delay` samples to x (current_length - int_delay) samples
+        # of the current block are copied which is the case for both "full" and "same" modes
+        x[start: start + (current_length - self.int_delay)] = samples[:(current_length-self.int_delay)]
+        start += current_length - self.int_delay
+
+        # 4. Handle full mode extra post-pend
+        if mode == "full":
+            if stream_position in (StreamPosition.START_BURST, StreamPosition.MIDDLE_BURST):
+                x[start:
+                  start + self.required_history] = samples[(current_length-self.int_delay):
+                                                           (current_length-self.int_delay) + self.required_history]
+            else:
+                # In the case of ISOLATED or END_BURST, we only need to attach the remaining samples within
+                # samples, the remaining (L-1) samples if we have an FIR, are already initialized to zero
+                x[start: start + self.int_delay] = samples[(current_length-self.int_delay): current_length]
+
+        # 5. Filter the input
+        if self.h_delay_fir is not None:
+            # We have an FIR filter to process
+            previous_zi = self.h_zi.copy()
+
+            if mode == "same":
+                y, self.h_zi = lfilter(self.h_delay_fir, [1.0], x, zi=self.h_zi)
+                # If we want repeatbility, reset the filter state to the original
+                if repeatable:
+                    self.h_zi = previous_zi
+            else:
+                if not repeatable:
+                    # Full mode
+                    # We want flush repeatability, determine and set the filter state to an intermediate state
+                    # that cooresponds to if we were doing "same" type output instead of "full"
+
+                    # Calculate and copy intermediate_zi state
+                    _, intermediate_zi = lfilter(self.h_delay_fir, [1.0], x[:-lookahead_length], zi=previous_zi)
+
+                    # rerun to get full output, but now having saved an intermediate state to allow for 'same' next time
+                    # Only used self.h_zi here instead of previous_zi because the linter/type-checker gets upset
+                    # self.h_zi never gets updated so it is equivalent besides clarity.
+                    y, _ = lfilter(self.h_delay_fir, [1.0], x, zi=self.h_zi)
+                    # Update the self.h_zi for next call to the intermediate state
+                    self.h_zi = intermediate_zi
+                else:
+                    # Nothing is repeated, being full does not affect anything in this regard
+                    y, _ = lfilter(self.h_delay_fir, [1.0], x, zi=self.h_zi)
+        else:
+            y = x
+        # 6. Extract the output of interest
+        y = y[startup_padding: startup_padding + current_length + lookahead_length]
+
+        # 7. Generate complex gain
+        if mode == "full" and not repeatable:
+            # Since in full mode, we need to ensure that the extra gain samples generated to get full output
+            # are repeatable, as if the current block was in mode "same" to ensure the next block has continous
+            # gain process
+            gain_a = self.gain_handler(current_length, repeatable=False)
+            gain_b = self.gain_handler(self.required_history, repeatable=True)
+            gain = concatenate((gain_a, gain_b), dtype=complex128)
+        else:
+            gain = self.gain_handler(current_length, repeatable)
+
+        # 8. Apply gain and return
+        return y * gain
 ###################################################################################################
 
 

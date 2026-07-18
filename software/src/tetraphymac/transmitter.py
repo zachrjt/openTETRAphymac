@@ -385,11 +385,11 @@ class RealTransmitter(RFTransmitter):
                                                      OPENTETRAPHYMAC_TX_HW_SSB_MASK,
                                                      self.low_offset_rnd_gen, self.high_offset_rnd_gen)
 
-        self.baseband_delay = int((self.rrc_filter_state[0].size // 2) * 8)
-        self.baseband_delay += int((self.lpf_filter_state[0].size // 2) * 8)
-        self.baseband_delay += int((self.halfband_1_filter_state[0].size // 2) * 4)
-        self.baseband_delay += int((self.halfband_2_filter_state[0].size // 2) * 2)
-        self.baseband_delay += int((self.halfband_3_filter_state[0].size // 2))
+        self.baseband_delay = int((self.rrc_filter_state[0].size / 2) * 8)
+        self.baseband_delay += int((self.lpf_filter_state[0].size / 2) * 8)
+        self.baseband_delay += int((self.halfband_1_filter_state[0].size / 2) * 4)
+        self.baseband_delay += int((self.halfband_2_filter_state[0].size / 2) * 2)
+        self.baseband_delay += int((self.halfband_3_filter_state[0].size / 2))
 
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
                              burst_ramp_periods: tuple[int, int]) -> tuple[NDArray[int64], NDArray[int64]]:
@@ -622,11 +622,11 @@ class IdealTransmitter(RFTransmitter):
         self._q_bessel_state = zeros(shape=0, dtype=float64)
         self._i_bessel_state = zeros(shape=0, dtype=float64)
 
-        self.baseband_delay = int((self.rrc_filter_state[0].size // 2) * 8)
-        self.baseband_delay += int((self.lpf_filter_state[0].size // 2) * 8)
-        self.baseband_delay += int((self.halfband_1_filter_state[0].size // 2) * 4)
-        self.baseband_delay += int((self.halfband_2_filter_state[0].size // 2) * 2)
-        self.baseband_delay += int((self.halfband_3_filter_state[0].size // 2))
+        self.baseband_delay = int((self.rrc_filter_state[0].size / 2) * 8)
+        self.baseband_delay += int((self.lpf_filter_state[0].size / 2) * 8)
+        self.baseband_delay += int((self.halfband_1_filter_state[0].size / 2) * 4)
+        self.baseband_delay += int((self.halfband_2_filter_state[0].size / 2) * 2)
+        self.baseband_delay += int((self.halfband_3_filter_state[0].size / 2))
 
     def _baseband_processing(self, symbol_complex_data: NDArray[complex64],
                              burst_ramp_periods: tuple[int, int]) -> tuple[NDArray[float64], NDArray[float64]]:
