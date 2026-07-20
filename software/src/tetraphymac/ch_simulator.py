@@ -5,7 +5,8 @@ reciever.
 from typing import Tuple, Literal
 from abc import ABC, abstractmethod
 from numpy import round, zeros, float64, complex128, pi, arange, cos, sin, sum as np_sum, empty, int64, \
-                  sqrt as np_sqrt, isclose, exp, full, concatenate
+                  sqrt as np_sqrt, isclose, exp, full, concatenate, ceil, allclose as np_allclose, floor, \
+                  linspace
 from numpy.typing import NDArray
 from numpy.random import SeedSequence, Generator, PCG64
 
@@ -33,6 +34,13 @@ class ComplexGainProcess(ABC):
     def next(self, n_samples: int, repeatable: bool = False) -> NDArray[complex128]:
         """
         Base abstract method that generates and returns n_samples of complex gain for the implemented process
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def null_advance(self, n_samples: int) -> None:
+        """
+        Base abstract method that advances the internal determinstic process states without perform computations
         """
         raise NotImplementedError
 
@@ -102,6 +110,9 @@ class StaticProcess(ComplexGainProcess):
 
         return out
 
+    def null_advance(self, n_samples: int) -> None:
+        self._sample_idx += int64(n_samples)
+
 
 class RayleighProcess(ComplexGainProcess):
     """
@@ -125,6 +136,7 @@ class RayleighProcess(ComplexGainProcess):
     """
     m: int
     _sample_idx: int64
+    _sample_frac_idx: int
     upsample_factor: int
     fd: float
     wd: float
@@ -142,13 +154,12 @@ class RayleighProcess(ComplexGainProcess):
     cos_phase_coef: NDArray[float64]
     sin_phase_coef: NDArray[float64]
 
-    _h_interp: NDArray[complex128]
-    _h_interp_mem: NDArray[complex128]
-    _mem_len: int
+    interpolator_mem_valid: bool
+    _h1_mem: NDArray[complex128]
     _interp_buffer: NDArray[complex128]
     _interp_buffer_len: int
 
-    def __init__(self, f_sim: int, f_doppler: float, seed_seq: SeedSequence | None, m_order: int = 264):
+    def __init__(self, f_sim: int, f_doppler: float, seed_seq: SeedSequence | None = None, m_order: int = 264):
         """
         Initializes the RayleighProcess for generated complex gain samples at rate: f_sim, for doppler shift of
         f_doppler with an m_order number of sine/cosine generators. Uses seed_seq if passed to spawn grandchildern
@@ -204,13 +215,15 @@ class RayleighProcess(ComplexGainProcess):
         self.cos_phase_coef = (self.wd/self.f_fade_sim) * cos(self.alpha_n)[:, None]
         self.sin_phase_coef = (self.wd/self.f_fade_sim) * sin(self.alpha_n)[:, None]
 
+        self.interpolator_mem_valid = False
+
         self._initialize_filters(f_sim)
 
     def _initialize_filters(self, f_sim: int):
         """
         Generates interpolate filters and normalizes their DC gain to 1. Allocates filter and output buffer memory.
         Calculates total filter group delay, and then generates cooresponding samples based on the group delay such that
-        when ._apply_complex_gain(signal) is called for the first time, output samples are non-transisent and coorespond
+        when ._apply_complex_gain(signal) is called for the first time, output samples are non-transient and coorespond
         with t=0.
 
         :param f_sim: The simulation rate of the channel simulation, expected to be TRANSMIT_SIMULATION_SAMPLE_RATE
@@ -236,7 +249,8 @@ class RayleighProcess(ComplexGainProcess):
                                         + ((self._h3_cleanup.size - 1) / 2))
 
         gd_base = self._cascade_group_delay // self.total_upsample
-        self._h1_mem = zeros(shape=(3*gd_base), dtype=complex128)
+        mem_size = (self._h1_interp.size // 2) + 2
+        self._h1_mem = zeros(shape=(mem_size), dtype=complex128)
 
         # Compensate for group delay such that when .apply_complex_gain() is called 1st time, samples start at t=0
         # This is not strictly needed but helps if output is compared to external code with same seed and implementation
@@ -244,10 +258,13 @@ class RayleighProcess(ComplexGainProcess):
         # Allocate interpolation buffer, note max used size is self.upsample_factor - 1
         self._buffer = zeros(self.total_upsample - 1, dtype=complex128)
         self._buffer_len = 0
-        # Generate warmup samples
-        warmup = 32768
+        # Generate warmup samples, next highest power of 2 compared to h1_mem size
+        warmup = 1 << (self._h1_mem.size - 1).bit_length()
         warmup_samples = self._generate(warmup, (gd_base-warmup))
-        _ = self._interpolate(warmup_samples)
+        self._h1_mem[:] = warmup_samples[-self._h1_mem.size:]
+
+        self.interpolator_mem_valid = True
+        self._sample_frac_idx = 0
 
     def _generate(self, n_samples: int, start_index: int | None = None) -> NDArray[complex128]:
         """
@@ -280,7 +297,7 @@ class RayleighProcess(ComplexGainProcess):
 
         a = np_sum(cos((idx * self.cos_phase_coef) + self.phi_n), axis=0)
         b = np_sum(sin((idx * self.sin_phase_coef) + self.psi_n), axis=0)
-        z = (np_sqrt(2/self.m))*(a + 1j*b)
+        z = (np_sqrt(1/self.m))*(a + 1j*b)
         return z
 
     def _interpolate(self, fade_samples: NDArray[complex128], repeatable: bool = False):
@@ -320,53 +337,17 @@ class RayleighProcess(ComplexGainProcess):
         # Stage 3 cleanup
         y3 = lfilter(self._h3_cleanup, [1.0], y2)
 
-        # Remove front pad which has filter transisents in it
+        # Remove front pad which has filter transients in it
         start = self._h1_mem.size * self.total_upsample
         stop = start + (n_samples * self.total_upsample)
         return y3[start:stop]
 
     def apply_complex_gain(self, signal: NDArray[complex128], repeatable: bool = False) -> NDArray[complex128]:
         """
-        Generates Rayleigh fading process complex gain via sum of sinusoids method at lower rate, then interpolates up
-        to f_sim sample rate of the passed input signal and apply the complex gain to input parameter signal.
-
-        Note: because of interpolation, finite leakage of the doppler spectrum occurs at frequnecy multiples of
-        TETRA_FADING_SIMULATION_RATE (80khz), rejection of leakage from interpolation is min. 190dB within 900khz,
-        and 150dB at most at n*960khz spectral images.
-
-
-        :param signal: Input array of complex128 data sampled at the f_sim rate passed to object at initilization
-        :type signal: NDArray[complex128]
-        :param repeatable: If True, does not increment sample counter of gain generation, therefore for the next same
-        sized input signal repeats the same complex gain profile, repeats for next call as long as set to True
-        :type repeatable: bool = False
-        :return: Returns input signal.size number samples multiplied by complex gain as: signal * z(t)
-        :rtype: NDArray[complex128]
+        Wrapper for testing next() when using class on it's own.
         """
-        # Determine how many base rate samples are required, taking into account leftover data in buffer
-        needed_samples = max(0, signal.size - self._buffer_len)
-        # integer ceiling form, instead of int(ceil(float))
-        n_samples = (needed_samples + self.total_upsample - 1) // self.total_upsample
-        if n_samples == 0:
-            leftover_samples = self._buffer_len - signal.size
-        else:
-            leftover_samples = n_samples * self.total_upsample - needed_samples
-
-        out_array = empty(shape=(signal.size), dtype=complex128)
-        out_array[:self._buffer_len] = self._buffer[:self._buffer_len]
-
-        if n_samples != 0:
-            # Generate base rate samples of the process
-            samples = self._generate(n_samples, int(self._sample_idx) if repeatable else None)
-            y = self._interpolate(samples, repeatable)
-            out_array[self._buffer_len:] = y[:needed_samples]
-            if not repeatable:
-                self._buffer[:leftover_samples] = y[needed_samples:]
-                self._buffer_len = leftover_samples
-        else:
-            if not repeatable:
-                self._buffer[:leftover_samples] = self._buffer[signal.size: self._buffer_len]
-                self._buffer_len = leftover_samples
+        # This is an older method for testing RayleighProcess on it's own
+        out_array = self.next(signal.size, repeatable)
 
         return signal * out_array
 
@@ -387,21 +368,37 @@ class RayleighProcess(ComplexGainProcess):
         :return: Returns n_samples number of complex gain for the Rayleigh process at f_sim
         :rtype: NDArray[complex128]
         """
+        # If we our FIR interpolation memory is invalid because we call null_advance previously enough
+        # Need to regenerate/warmup interpolation memory
+        if not self.interpolator_mem_valid:
+            # Generate warmup samples, next highest power of 2 compared to h1_mem size
+            # 1. Generate warmup to fill memory of
+            warmup = 1 << (self._h1_mem.size - 1).bit_length()
+            warmup_samples = self._generate(warmup, (int(self._sample_idx) - warmup))
+            self._h1_mem[:] = warmup_samples[-self._h1_mem.size:]
+
+            # 2. Fill up buffer to match absolute timing
+            pending_interp_samples = (-self._sample_frac_idx) % self.total_upsample
+            x_temp = self._generate(1, None)
+            y_temp = self._interpolate(x_temp)
+            self._buffer[:pending_interp_samples] = y_temp[-pending_interp_samples:]
+            self._buffer_len = pending_interp_samples
+
         # Determine how many base rate samples are required, taking into account leftover data in buffer
         needed_samples = max(0, n_samples - self._buffer_len)
         # integer ceiling form, instead of int(ceil(float))
-        n_samples = (needed_samples + self.total_upsample - 1) // self.total_upsample
-        if n_samples == 0:
+        base_samples = (needed_samples + self.total_upsample - 1) // self.total_upsample
+        if base_samples == 0:
             leftover_samples = self._buffer_len - n_samples
         else:
-            leftover_samples = n_samples * self.total_upsample - needed_samples
+            leftover_samples = (base_samples * self.total_upsample) - needed_samples
 
         out_array = empty(shape=(n_samples), dtype=complex128)
         out_array[:self._buffer_len] = self._buffer[:self._buffer_len]
 
-        if n_samples != 0:
+        if base_samples != 0:
             # Generate base rate samples of the process
-            samples = self._generate(n_samples, int(self._sample_idx) if repeatable else None)
+            samples = self._generate(base_samples, (None if not repeatable else int(self._sample_idx)))
             y = self._interpolate(samples, repeatable)
             out_array[self._buffer_len:] = y[:needed_samples]
             if not repeatable:
@@ -412,9 +409,37 @@ class RayleighProcess(ComplexGainProcess):
                 self._buffer[:leftover_samples] = self._buffer[n_samples: self._buffer_len]
                 self._buffer_len = leftover_samples
 
+        if not self.interpolator_mem_valid:
+            if not repeatable:
+                self._sample_frac_idx = 0
+                self.interpolator_mem_valid = True
+            else:
+                self._buffer_len = 0
+                self._sample_idx -= 1
+
         return out_array
 
-###################################################################################################
+    def null_advance(self, n_samples: int) -> None:
+        # In this mode, we increment the sample_idx but do not generate gain_samples
+        # because of this there may be a discontinuity in the interpolation filter memory when we
+        # finally do call next(), so we change a state variable to track that
+
+        if n_samples <= self._buffer_len:
+            # Throw out self._inter_buffer samples then
+            self._buffer_len -= n_samples
+        else:
+            # FIR interpolation memory is not longer valid, need to regenerate on the next next() call
+            self.interpolator_mem_valid = False
+
+            remaining = n_samples - self._buffer_len
+            self._buffer_len = 0
+
+            fractional = self._sample_frac_idx + remaining
+
+            self._sample_idx += int64(fractional // self.total_upsample)
+            self._sample_frac_idx = (fractional % self.total_upsample)
+
+##########################################################
 
 
 def _generate_lagrange_delay_fir(d: float, n_order: int = 3) -> NDArray[complex128]:
@@ -513,14 +538,16 @@ class PropagationTap:
     int_delay: int
     h_delay_fir: NDArray[complex128] | None
     scale: float
-    prime_fir_state: bool
+    fir_startup_priming: bool
     required_history: int
+    fir_start_transient_delay: int
 
     tap_gain_process: TetraTapGainProcess
     rayleigh_process: RayleighProcess | None
     static_process: StaticProcess | None
 
-    def __init__(self, f_sim: int, f_doppler: float, tap_data: PropagationTapParameters, seed_seq: SeedSequence):
+    def __init__(self, f_sim: int, f_doppler: float,
+                 tap_data: PropagationTapParameters, seed_seq: SeedSequence | None = None):
 
         # 1. Handle initialization for the delay process
         # If we have non zero-delay, determine a Lagrange FIR that can provide fractional delay, and remaining delay
@@ -529,11 +556,13 @@ class PropagationTap:
         if self.h_delay_fir is not None:
             self.h_zi = zeros(shape=self.h_delay_fir.size - 1, dtype=complex128)
             self.required_history = self.int_delay + (self.h_delay_fir.size - 1)
+            self.fir_start_transient_delay = int(ceil((self.h_delay_fir.size - 1) / 2))
+            self.fir_end_transient_delay = int(floor((self.h_delay_fir.size - 1) / 2))
         else:
             self.h_zi = zeros(shape=1, dtype=complex128)
             self.required_history = self.int_delay
 
-        self.prime_fir_state = True
+        self.fir_startup_priming = True
         self.int_delay_buffer = zeros(shape=self.int_delay, dtype=complex128)
 
         # 2. Handle ampltiude scaling
@@ -547,7 +576,7 @@ class PropagationTap:
             self.h_delay_fir *= self.scale
 
         # 3. Handle tap_gain_process
-        if tap_data.process not in TetraTapGainProcess:
+        if tap_data.process not in [p.value for p in TetraTapGainProcess]:
             raise ValueError(f"Passed tap parameters has tap-gain-process value of: {tap_data.process}"
                              f", valid processes are of type in: {[p.value for p in TetraTapGainProcess]}")
         self.tap_gain_process = tap_data.process
@@ -585,34 +614,57 @@ class PropagationTap:
         return gain
 
     def reset_state(self):
-        self.int_delay_buffer[:] = 0.0 + 0.0j
+        self.int_delay_buffer[:] = (0.0 + 0.0j)
 
         if self.h_delay_fir is not None:
             self.h_zi[:] = 0.0 + 0.0j
 
-        self.prime_fir_state = True
+        self.fir_startup_priming = True
 
-    def null(self, n_samples: int):
+    def null_advance(self, n_samples: int):
         # Null means we are not transmitting anything but want timing to continue
         # thus insert zeros to flush the memory of process and increment processes
         # if we have no samples in memory, we can tell the processes to increment
         # their process trackers internally but without computation to reduce complexity
+        if n_samples < self.required_history:
+            raise ValueError(f"PropagationTap cannot process data with length less than: {self.required_history},"
+                             f" recieved n_samples with size: {n_samples}")
+        # TODO: Finish null_advance function PropagationTap
         pass
 
     def process(self, samples: NDArray[complex128],
                 current_length: int,
                 stream_position: StreamPosition,
                 mode: Literal["same", "full"] = "same",
-                repeatable: bool = False) -> NDArray[complex128]:
+                repeatable: bool = False,
+                debug: bool = False) -> NDArray[complex128]:
         if current_length > samples.size:
             raise ValueError(f"Insufficent additional samples were passed, recieved:"
                              f" {samples.size}, excpected {current_length} based"
                              " on `current_length` argument.")
+
+        # The reason for this limitation is otherwise the delay buffer and filter memory can be populated with zeros
+        # and produce excess unmitgiated start/tail transients
+        if samples.size < self.required_history:
+            raise ValueError(f"PropagationTap cannot process data with length less than: {self.required_history},"
+                             f" recieved samples with length: {samples.size}")
+
+        # Handle if a null_advance is pushing out the rest of a burst
+        suppress_end_transient = False
+        suppress_middle_transient = False
+        if self.h_delay_fir is not None:
+            # Note that because current_length > self.required_history, there is never a time when self.int_delay_buffer
+            # has data in it and self.h_zi doesnt not, vice versa, thus we only need to check one
+            if np_allclose(samples[:current_length], 0.0):
+                suppress_middle_transient = True
+
         # 1. Calculate size, allocate, and fill input array to filter
         # Calculate the flush pads at start and end
         startup_padding = 0
+        delay_buffer_tail_padding = 0
         lookahead_length = 0
-        if self.prime_fir_state:
+        post_tail_padding = 0
+        if self.fir_startup_priming:
             startup_padding += (0 if self.h_delay_fir is None else self.h_delay_fir.size - 1)
 
         if mode == "full":
@@ -624,58 +676,105 @@ class PropagationTap:
                                      f" stream burst type: {stream_position} in mode: {mode},"
                                      f" expected: {required_extra_samples}, got:"
                                      f" {(samples.size - current_length)}")
+            else:
+                suppress_end_transient = True
 
-        input_size = startup_padding + current_length + lookahead_length
+        # If we need to suppress the tail transient, append (L-1 extra samples)
+        if suppress_end_transient:
+            post_tail_padding += (0 if self.h_delay_fir is None else self.h_delay_fir.size - 1)
+        elif suppress_middle_transient:
+            delay_buffer_tail_padding += (0 if self.h_delay_fir is None else self.h_delay_fir.size - 1)
+
+        input_size = startup_padding + delay_buffer_tail_padding + current_length + lookahead_length + post_tail_padding
         x = zeros(shape=input_size, dtype=complex128)
-        start = 0 + startup_padding
+        start = 0
 
         # 2. Handle the integer delay buffer
+        print(f"Int buffer Before: {self.int_delay_buffer[:10]}")
         x[start: start + self.int_delay] = self.int_delay_buffer[:]
         start += self.int_delay
+
+        # 4. Handle padding
+        if startup_padding > 0:
+            x[start: start + startup_padding] = samples[0]
+            print("Added Startup Padding")
+        start += startup_padding
+
+        if delay_buffer_tail_padding > 0:
+            # In the middle padding we are compensating for tail transistion to zero
+            # to help with this we perform (L-1) point linear slope from self._int_delay_buffer[-1] to 0
+            # Later on the pad is removed but this reduces/mitigates the FIR transient in the returned data
+            pad = linspace(self.int_delay_buffer[-1], (0.0 + 0.0j),
+                           (delay_buffer_tail_padding + 2), endpoint=True, dtype=complex128)[1:-1]
+            x[start: start + delay_buffer_tail_padding] = pad[:]
+            print("Added Delay Buffer Tail Padding")
+        start += delay_buffer_tail_padding
+
+        # Copy extra data into int_delay_buffer
         if not repeatable:
             if stream_position in (StreamPosition.START_BURST, StreamPosition.MIDDLE_BURST):
                 # We dont want our lookahead portion in memory
                 # instead we want to keep the memory as if we were in "same" mode
-                self.int_delay_buffer[:] = samples[-self.required_history: -(self.required_history - self.int_delay)]
+                self.int_delay_buffer[:] = samples[current_length - self.int_delay: current_length]
             else:
                 self.int_delay_buffer[:] = samples[-self.int_delay:]
+        print(f"Int buffer After: {self.int_delay_buffer[:10]}")
 
-        # 3. Add current_samples
+        # 5. Add current_samples
         # The integer delay buffer already contributes `int_delay` samples to x (current_length - int_delay) samples
         # of the current block are copied which is the case for both "full" and "same" modes
         x[start: start + (current_length - self.int_delay)] = samples[:(current_length-self.int_delay)]
         start += current_length - self.int_delay
 
-        # 4. Handle full mode extra post-pend
+        # 6. Handle full mode extra post-pend
         if mode == "full":
             if stream_position in (StreamPosition.START_BURST, StreamPosition.MIDDLE_BURST):
                 x[start:
                   start + self.required_history] = samples[(current_length-self.int_delay):
                                                            (current_length-self.int_delay) + self.required_history]
+                start += self.required_history
             else:
                 # In the case of ISOLATED or END_BURST, we only need to attach the remaining samples within
                 # samples, the remaining (L-1) samples if we have an FIR, are already initialized to zero
                 x[start: start + self.int_delay] = samples[(current_length-self.int_delay): current_length]
+                start += self.int_delay
 
-        # 5. Filter the input
+        # 7. Handle any tail padding
+        if post_tail_padding > 0:
+            # In the tail padding we are compensating for tail transistion to zero
+            # to help with this we perform (L-1) point linear slope from samples[-1] to 0
+            # Later on the pad is removed but this reduces/mitigates the FIR transient in the returned data
+            if np_allclose(samples[-1], 0.0):
+                # If for some reason "full" is called on a zero pad flush from advance_null, there is no point
+                # in calculate a linspace, set all pad values to zero.
+                pad = zeros(shape=post_tail_padding, dtype=complex128)
+            else:
+                pad = linspace(samples[-1], (0.0 + 0.0j), (post_tail_padding + 2),
+                               endpoint=True, dtype=complex128)[1:-1]
+                print("Added Post Tail Padding")
+            x[start: start + post_tail_padding] = pad[:]
+
+        # 8. Filter the input
         if self.h_delay_fir is not None:
             # We have an FIR filter to process
             previous_zi = self.h_zi.copy()
 
             if mode == "same":
+                print(f"Before self.h_zi: {self.h_zi}")
                 y, self.h_zi = lfilter(self.h_delay_fir, [1.0], x, zi=self.h_zi)
+                if debug:
+                    print(f"h_zi state: {self.h_zi}")
+                print(f"After self.h_zi: {self.h_zi}")
                 # If we want repeatbility, reset the filter state to the original
                 if repeatable:
-                    self.h_zi = previous_zi
+                    self.h_zi = previous_zi.copy()
             else:
                 if not repeatable:
                     # Full mode
                     # We want flush repeatability, determine and set the filter state to an intermediate state
                     # that cooresponds to if we were doing "same" type output instead of "full"
-
                     # Calculate and copy intermediate_zi state
                     _, intermediate_zi = lfilter(self.h_delay_fir, [1.0], x[:-lookahead_length], zi=previous_zi)
-
                     # rerun to get full output, but now having saved an intermediate state to allow for 'same' next time
                     # Only used self.h_zi here instead of previous_zi because the linter/type-checker gets upset
                     # self.h_zi never gets updated so it is equivalent besides clarity.
@@ -687,21 +786,47 @@ class PropagationTap:
                     y, _ = lfilter(self.h_delay_fir, [1.0], x, zi=self.h_zi)
         else:
             y = x
-        # 6. Extract the output of interest
-        y = y[startup_padding: startup_padding + current_length + lookahead_length]
+        # 9. Extract the output of interest
+        start_delay_offset = 0
+        end_delay_offset = 0
 
-        # 7. Generate complex gain
-        if mode == "full" and not repeatable:
+        if self.h_delay_fir is not None:
+            if startup_padding > 0:
+                start_delay_offset = self.fir_start_transient_delay
+            elif delay_buffer_tail_padding > 0:
+                start_delay_offset = self.fir_end_transient_delay
+
+            if post_tail_padding > 0:
+                end_delay_offset = self.fir_end_transient_delay
+
+        start = self.int_delay + start_delay_offset
+        end = self.int_delay + start_delay_offset + startup_padding + delay_buffer_tail_padding
+        y = concatenate((y[:start], y[end:end + current_length + lookahead_length + post_tail_padding]))
+        start = self.int_delay + current_length + end_delay_offset
+        y = concatenate((y[:start], y[start + post_tail_padding:]))
+        # 10. Generate complex gain
+        if mode == "full":
             # Since in full mode, we need to ensure that the extra gain samples generated to get full output
             # are repeatable, as if the current block was in mode "same" to ensure the next block has continous
             # gain process
-            gain_a = self.gain_handler(current_length, repeatable=False)
+            gain_a = self.gain_handler(current_length, repeatable=repeatable)
             gain_b = self.gain_handler(self.required_history, repeatable=True)
             gain = concatenate((gain_a, gain_b), dtype=complex128)
         else:
             gain = self.gain_handler(current_length, repeatable)
+        if startup_padding > 0 and delay_buffer_tail_padding > 0:
+            raise RuntimeError(f"PropagationTap, both start and delay buffer tail padding is non zero:"
+                               f" {startup_padding}, and {delay_buffer_tail_padding} respectively.")
+        # 11. Check if downstream delay arrays is zero
+        if self.h_delay_fir is not None:
+            # Note that because current_length > self.required_history, there is never a time when self.int_delay_buffer
+            # has data in it and self.h_zi doesnt not, vice versa, thus we only need to check one
+            if np_allclose(self.int_delay_buffer, 0.0):
+                self.fir_startup_priming = True
+            else:
+                self.fir_startup_priming = False
 
-        # 8. Apply gain and return
+        # 12. Apply gain and return
         return y * gain
 ###################################################################################################
 
