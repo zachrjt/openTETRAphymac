@@ -9,7 +9,7 @@ from typing import Tuple
 from numpy import abs as np_abs, ceil, complex128, cos, empty, exp, float64, log10, ones_like, pi, sqrt, sum as np_sum
 from numpy import zeros
 from numpy.fft import fftshift as np_fftshift, irfft as np_irfft, rfft as np_rfft, rfftfreq as np_rfftfreq
-from numpy.random import PCG64, Generator
+from numpy.random import PCG64, Generator, SeedSequence
 from numpy.typing import NDArray
 
 from scipy.signal import remez as sp_remez, upfirdn as sp_upfirdn

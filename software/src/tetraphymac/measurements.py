@@ -286,7 +286,8 @@ def tx_wideband_noise_measurement(tx_data: NDArray[complex64], sn0: int, snmax: 
 def psd_welch(tx_data: NDArray[complex64],
               sn0: int, snmax: int, sample_rate: float,
               onesided: bool = False,
-              nperseg: int = 32768):
+              nperseg: int = 32768,
+              xlim: Tuple[float, float] = (-1e6, 1e6)):
     """
     Creates a matplotlit plt of the PSD of the passed tx_data via Welch's Method.
 
@@ -337,7 +338,7 @@ def psd_welch(tx_data: NDArray[complex64],
     plt.plot(freq_list[sort_index], tx_dbm_density[sort_index])  # type: ignore
     plt.grid()  # type: ignore
     plt.xlabel("Frequency (Hz)")  # type: ignore
-    plt.xlim(left=-4E6 if not onesided else 0, right=4E6)  # type: ignore
+    plt.xlim(left=xlim[0] if not onesided else 0, right=xlim[1])  # type: ignore
     plt.ylabel("PSD (dBm/Hz) into 50ohm")  # type: ignore
     plt.title(f"Welch PSD of tx_data, RBW: {(1/tseg):.2f}")  # type: ignore
     plt.show()  # type: ignore
@@ -442,7 +443,7 @@ def measure_filter_group_delay(fs: float64 | float, sos: NDArray[float64] | None
         delay_s = int(floor(-1*coeff[0] * (fs)))
     else:
         # return fractional result, so perform no floor/rounding
-        delay_s = (-1*coeff[0] * (fs))
+        delay_s = -1*coeff[0] * (fs)
 
     if plot_result:
         plt.figure()  # type: ignore

@@ -140,12 +140,18 @@ OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY = 918.025E6
 
 
 class TetraTapGainProcess(str, Enum):
-    STATIC_PROCESS = "STATIC"
-    RICE_PROCESS = "RICE"
-    CLASS_PROCESS = "CLASS"
+    """
+    Enum class used to wrap the types of fading gain procceses that the TETRA standard specifies
+    """
+    STATIC_PROCESS = "STATIC"  # Static process only has doppler shift, constant envelope
+    RICE_PROCESS = "RICE"      # Rice process is equal combination of LOS static and class(rayleigh) processes
+    CLASS_PROCESS = "CLASS"    # Class process is Rayleigh fading process
 
 
 class TetraPropagationModels(str, Enum):
+    """
+    Enum class used to wrap the propagation model types that the TETRA standard documents
+    """
     STATIC = "STATIC"
     RURAL_AREA = "RA"
     TYPICAL_URBAN = "TU"
@@ -164,6 +170,9 @@ TETRA_DEFAULT_MODEL_VELOCITIES_KPH = {TetraPropagationModels.STATIC: 0.0,
 
 @dataclass(frozen=True)
 class PropagationTapParameters:
+    """
+    Dataclass used to hold PropagationTap data such as process type, delay, and mean scaling
+    """
     delay: float
     amplitude_scale: float
     process: TetraTapGainProcess
@@ -171,6 +180,10 @@ class PropagationTapParameters:
 
 @dataclass(frozen=True)
 class PropagationModelParameters:
+    """
+    Dataclass used to hold up to multiple PropagationTapParameters describing the various taps of TETRA propgation
+    model
+    """
     taps: tuple[PropagationTapParameters, ...]
 
 
@@ -206,6 +219,9 @@ TETRA_FADING_SIMULATION_RATE = int(80_000)
 # Enum constant class used to specify the nature of the burst/block being handled
 # by PropagationTap
 class StreamPosition(str, Enum):
+    """
+    Enum class used to wrap the valid descriptions of block characteristics used in PropgationTap/Mode implementation
+    """
     ISOLATED_BURST = "ISOLATED"
     START_BURST = "START"
     MIDDLE_BURST = "MIDDLE"
