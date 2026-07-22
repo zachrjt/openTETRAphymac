@@ -10,7 +10,7 @@ from numpy import sum as np_sum, abs as np_abs
 from numpy.typing import NDArray
 
 from scipy.signal import welch
-from scipy.signal import sosfilt as sp_sosfilt
+from scipy.signal import sosfilt as sp_sosfilt, lfilter as sp_lfilter
 import matplotlib.pyplot as plt
 
 from .transmitter import TETRA_SYMBOL_RATE
@@ -286,7 +286,8 @@ def tx_wideband_noise_measurement(tx_data: NDArray[complex64], sn0: int, snmax: 
 def psd_welch(tx_data: NDArray[complex64],
               sn0: int, snmax: int, sample_rate: float,
               onesided: bool = False,
-              nperseg: int = 32768):
+              nperseg: int = 32768,
+              xlim: Tuple[float, float] = (-1e6, 1e6)):
     """
     Creates a matplotlit plt of the PSD of the passed tx_data via Welch's Method.
 
@@ -337,28 +338,38 @@ def psd_welch(tx_data: NDArray[complex64],
     plt.plot(freq_list[sort_index], tx_dbm_density[sort_index])  # type: ignore
     plt.grid()  # type: ignore
     plt.xlabel("Frequency (Hz)")  # type: ignore
-    plt.xlim(left=-4E6 if not onesided else 0, right=4E6)  # type: ignore
+    plt.xlim(left=xlim[0] if not onesided else 0, right=xlim[1])  # type: ignore
     plt.ylabel("PSD (dBm/Hz) into 50ohm")  # type: ignore
     plt.title(f"Welch PSD of tx_data, RBW: {(1/tseg):.2f}")  # type: ignore
     plt.show()  # type: ignore
 
 
-def measure_iir_group_delay(fs: float64 | float, h_sos: NDArray[float64],
-                            start_eval_f: float64 | float, end_eval_f: float64 | float, n_eval_points: int = 8,
-                            plot_result: bool = False) -> int:
+def measure_filter_group_delay(fs: float64 | float, sos: NDArray[float64] | None,
+                               b: NDArray[complex128 | float64] | None,
+                               start_eval_f: float64 | float, end_eval_f: float64 | float, n_eval_points: int = 8,
+                               plot_result: bool = False, fractional_result: bool = False) -> int | float:
     """
-    Measures the group delay of a sos (second order sections) filter in a finite bandwidth. useful for
-    determing the delay of an IIR filter which is not fixed for all frequencies, returns and floor result for the delay.
+    Measures the group delay of a either:
+    1. sos (second order sections) defined filter (typically IIR)
+    2. b (numerator coefficents) defined filter (FIR only, no support for denominator coefficents)
+
+    Measures in a finite bandwidth. useful for determing the delay of an IIR filter or even order/fractional group delay
+    type FIR filter, which does not have fixed group delay for all frequencies.
 
     Works by measuring phase response of filter transfer function at different frequency points, unwrapping it, and
     calculating group delay as -(d/dw) * phase(f) where (d/dw) is the derivative with respect to angular frequency.
 
     Can plot the fitted phase response data if plot_result is set to True to verify linearity.
 
+    Returns by default the integer floor group delay value fit within the measurement bandwidth, or a fractional float
+    value, both in terms of number of samples at rate fs
+
     :param fs: Sample rate of filter in Hz.
     :type fs: float64 | float
-    :param h_sos: Filter sos (second-order-sections) array for IIR scipy filter functions such as bessel
-    :type h_sos: NDArray[float64]
+    :param sos: Filter sos (second-order-sections) array for IIR scipy filter functions such as bessel, or None
+    :type sos: NDArray[float64] | None
+    :param b: Filter b numerator coefficents array for FIR scipy filter functions like remez, firwin
+    :type b: NDArray[float64] | None
     :param start_eval_f: The start frequency point in Hz of the group delay evaluation bandwidth.
     :type start_eval_f: float64 | float
     :param end_eval_f: The end frequency point in Hz of the group delay evaluation bandwidth
@@ -368,8 +379,12 @@ def measure_iir_group_delay(fs: float64 | float, h_sos: NDArray[float64],
     :type n_eval_points: int
     :param plot_result: Boolean for wether or not to generate plot of the linear phase fit for calculating group delay
     :type plot_result: bool
-    :return: Returns the floor result of the group delay in number of samples at Fs rate
-    :rtype: int
+    :param fractional_result: Boolean for wether or not to return group delay as a floor int value or a fractional float
+    result
+    :type fractional_result: bool
+    :return: Returns the either the floor result of the group delay in number of samples at fs rate, or the just the
+    fractional delay as a float in terms of number of samples at fs rate.
+    :rtype: int | float
     """
     # 1. Generate frequency array for evaluation
     if start_eval_f >= end_eval_f:
@@ -390,8 +405,21 @@ def measure_iir_group_delay(fs: float64 | float, h_sos: NDArray[float64],
     for i, f in enumerate(f_array):
 
         x = exp(1j * 2 * pi * f * t)
-        yi = float64(sp_sosfilt(h_sos, x.real))  # type: ignore
-        yq = float64(sp_sosfilt(h_sos, x.imag))  # type: ignore
+        if sos is not None:
+            yi = float64(sp_sosfilt(sos, x.real))  # type: ignore
+            yq = float64(sp_sosfilt(sos, x.imag))  # type: ignore
+        elif b is not None:
+            if b.dtype == complex128:
+                ytemp = sp_lfilter(b, [1.0], x)
+                yi = float64(ytemp.real)
+                yq = float64(ytemp.imag)
+            elif b.dtype == float64:
+                yi = float64(sp_lfilter(b, [1.0], x.real))
+                yq = float64(sp_lfilter(b, [1.0], x.imag))
+            else:
+                raise TypeError(f"Type of b coefficents passed is {b.dtype}, expected np.float64, or np.complex128")
+        else:
+            raise ValueError("Both h_sos and h_b are None, no filter coefficents to measure")
         y = yi + 1j*yq
 
         discard = int(0.3 * t.size)
@@ -411,7 +439,11 @@ def measure_iir_group_delay(fs: float64 | float, h_sos: NDArray[float64],
 
     # Using floor rounding is fine, we dont want to miss a sample index that contains part of our signal so a fractional
     # delay amount is tolerable
-    delay_s = int(floor(-1*coeff[0] * (fs)))
+    if not fractional_result:
+        delay_s = int(floor(-1*coeff[0] * (fs)))
+    else:
+        # return fractional result, so perform no floor/rounding
+        delay_s = -1*coeff[0] * (fs)
 
     if plot_result:
         plt.figure()  # type: ignore

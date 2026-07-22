@@ -145,7 +145,6 @@ def main():
 
     pkt_traffic_ch = tetraLch.TCH_4_8(n=4)
     pkt_traffic_ch.encode_type5_bits(pkt_traffic_ch.generate_rnd_input(4))
-    ul_tp_rf_channel = tetraPhy.PhysicalChannel(1, False, 905.1, 918.1, tetraPhy.PhyType.TRAFFIC_CHANNEL)
 
     ul_tp_burst = tetraPhy.NormalUplinkBurst(ul_tp_rf_channel, 1, 1, 1)
     burst_modulation_bits = ul_tp_burst.construct_burst_sequence(pkt_traffic_ch)
@@ -167,16 +166,16 @@ def main():
 
     print("Real digital tx ACPR results:")
     print(tetraMeas.tx_acpr_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
-    print("Ideal digital tx ACPR results:")
-    print(tetraMeas.tx_acpr_measurement(rx_ideal.astype(np.complex64), sn0, snmax, Fs2))
+    #print("Ideal digital tx ACPR results:")
+    #print(tetraMeas.tx_acpr_measurement(rx_ideal.astype(np.complex64), sn0, snmax, Fs2))
 
     print("Real digital tx Wideband Noise results:")
     print(tetraMeas.tx_wideband_noise_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
-    print("Ideal digital tx Wideband Noise results:")
-    print(tetraMeas.tx_wideband_noise_measurement(rx_ideal.astype(np.complex64), sn0, snmax, Fs2))
+    #print("Ideal digital tx Wideband Noise results:")
+    #print(tetraMeas.tx_wideband_noise_measurement(rx_ideal.astype(np.complex64), sn0, snmax, Fs2))
 
     tetraMeas.psd_welch(rx_real, sn0, snmax, Fs2)
-    tetraMeas.psd_welch(rx_ideal, sn0, snmax, Fs2)
+    #tetraMeas.psd_welch(rx_ideal, sn0, snmax, Fs2)
 
     
     # Demonstrate .iq file saving ability
@@ -216,8 +215,8 @@ def main():
 
     # # Demonstrate .iq file saving ability
     # data = np.vstack((I_real, Q_real))
-    # tetraUtil.save_burst_iqfile(data, "iqData.iq", endian="little")
-    # i_data, q_data = tetraUtil.read_burst_iqfile("iqData.iq", msb_aligned=True, endian="little")
+    # tetraUtil.save_burst_iqfile(data, "iq_files\iqData.iq", endian="little")
+    # i_data, q_data = tetraUtil.read_burst_iqfile("iq_files\iqData.iq", msb_aligned=True, endian="little")
     # I_real = i_data.copy()
     # Q_real = q_data.copy()
 

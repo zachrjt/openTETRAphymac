@@ -3,8 +3,8 @@ constants.py holds constains that are used across modules, including enum string
 channel behaviours as well as MAC layer operation types. For modules specific constants they are included within modules
 as needed or otherwise colated into related utility files.
 """
+from dataclasses import dataclass
 from enum import Enum
-
 #############################################
 # PHYSICAL CHANNEL CONSTANTS
 
@@ -131,5 +131,101 @@ TDMAFRAME_TIMESLOT_LENGTH = 4       # How many timeslots in a frame
 TIMESLOT_BIT_LENGTH = 510           # How many modulation bits in a timeslot
 
 TIMESLOT_SUBSLOT_LENGTH = 2         # How many subslots in a timeslot
+
+OPENTETRAPHYMAC_DEFAULT_TX_FREQUENCY = 905.025E6
+OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY = 918.025E6
+
+#############################################
+# Propagation Models
+
+
+class TetraTapGainProcess(str, Enum):
+    """
+    Enum class used to wrap the types of fading gain procceses that the TETRA standard specifies
+    """
+    STATIC_PROCESS = "STATIC"  # Static process only has doppler shift, constant envelope
+    RICE_PROCESS = "RICE"      # Rice process is equal combination of LOS static and class(rayleigh) processes
+    CLASS_PROCESS = "CLASS"    # Class process is Rayleigh fading process
+
+
+class TetraPropagationModels(str, Enum):
+    """
+    Enum class used to wrap the propagation model types that the TETRA standard documents
+    """
+    STATIC = "STATIC"
+    RURAL_AREA = "RA"
+    TYPICAL_URBAN = "TU"
+    BAD_URBAN = "BU"
+    HILLY_TERRAIN = "HT"
+    EQUALIZATION_TEST = "EQ"
+
+
+# Velocities (speeds actually) are only defined for STATIC, TU50, HT200, EQ200, other models are included here but don't
+# have a default velocity defined in the standard because they arent used for performance requirements
+TETRA_DEFAULT_MODEL_VELOCITIES_KPH = {TetraPropagationModels.STATIC: 0.0,
+                                      TetraPropagationModels.TYPICAL_URBAN: 50.0,
+                                      TetraPropagationModels.HILLY_TERRAIN: 200.0,
+                                      TetraPropagationModels.EQUALIZATION_TEST: 200.0}
+
+
+@dataclass(frozen=True)
+class PropagationTapParameters:
+    """
+    Dataclass used to hold PropagationTap data such as process type, delay, and mean scaling
+    """
+    delay: float
+    amplitude_scale: float
+    process: TetraTapGainProcess
+
+
+@dataclass(frozen=True)
+class PropagationModelParameters:
+    """
+    Dataclass used to hold up to multiple PropagationTapParameters describing the various taps of TETRA propgation
+    model
+    """
+    taps: tuple[PropagationTapParameters, ...]
+
+
+TETRA_PROPAGATION_MODELS = {
+    TetraPropagationModels.STATIC: PropagationModelParameters(
+        taps=(PropagationTapParameters(0.0, 1.0, TetraTapGainProcess.STATIC_PROCESS),)),
+
+    TetraPropagationModels.RURAL_AREA: PropagationModelParameters(
+        taps=(PropagationTapParameters(0.0, 1.0, TetraTapGainProcess.RICE_PROCESS),)),
+
+    TetraPropagationModels.TYPICAL_URBAN: PropagationModelParameters(
+        taps=(PropagationTapParameters(0.0, 1.0, TetraTapGainProcess.CLASS_PROCESS),
+              PropagationTapParameters(5.0E-6, 10**(-22.3/20), TetraTapGainProcess.CLASS_PROCESS))),
+
+    TetraPropagationModels.BAD_URBAN: PropagationModelParameters(
+        taps=(PropagationTapParameters(0.0, 1.0, TetraTapGainProcess.CLASS_PROCESS),
+              PropagationTapParameters(5.0E-6, 10**(-3.0/20), TetraTapGainProcess.CLASS_PROCESS))),
+
+    TetraPropagationModels.HILLY_TERRAIN: PropagationModelParameters(
+        taps=(PropagationTapParameters(0.0, 1.0, TetraTapGainProcess.CLASS_PROCESS),
+              PropagationTapParameters(15.0E-6, 10**(-8.6/20), TetraTapGainProcess.CLASS_PROCESS))),
+
+    TetraPropagationModels.EQUALIZATION_TEST: PropagationModelParameters(
+        taps=(PropagationTapParameters(0.0, 1.0, TetraTapGainProcess.CLASS_PROCESS),
+              PropagationTapParameters(11.6E-6, 1.0, TetraTapGainProcess.CLASS_PROCESS),
+              PropagationTapParameters(73.2E-6, 10**(-10.2/20), TetraTapGainProcess.CLASS_PROCESS),
+              PropagationTapParameters(99.3E-6, 10**(-16.0/20), TetraTapGainProcess.CLASS_PROCESS)))}
+
+
+TETRA_FADING_SIMULATION_RATE = int(80_000)
+
+
+# Enum constant class used to specify the nature of the burst/block being handled
+# by PropagationTap
+class StreamPosition(str, Enum):
+    """
+    Enum class used to wrap the valid descriptions of block characteristics used in PropgationTap/Mode implementation
+    """
+    ISOLATED_BURST = "ISOLATED"
+    START_BURST = "START"
+    MIDDLE_BURST = "MIDDLE"
+    END_BURST = "END"
+
 
 #############################################

@@ -359,7 +359,7 @@ def rcpc_encoder(input_data: NDArray[uint8], k2: int, k3: int) -> NDArray[uint8]
             nibble_temp[i] = c
 
         # add the 4 new bits
-        encoded_data_temp.extend(nibble_temp)
+        encoded_data_temp.extend(nibble_temp)  # type: ignore
         # add new data point to top of shift reg, discard oldest bit on rightside
         shift_register.appendleft(bit)
 
