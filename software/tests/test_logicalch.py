@@ -11,8 +11,6 @@ import numpy as np
 
 import src.tetraphymac.logical_channels as lc
 
-np.random.seed(10)
-
 # parameterize the arguments so we only need to pass keyword arguments which are already formatted in a dict
 CASES = [
     # Traffic channels with n

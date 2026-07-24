@@ -137,13 +137,13 @@ def power_envelope(yreal, yideal, Fs, overlay:False):
 def main():
 
     # Generate burst data
-    tx_real = tetraTx.RealTransmitter()
-    tx_ideal = tetraTx.IdealTransmitter()
+    ss = np.random.SeedSequence(12345)
+    real_seed, ideal_seed, log_ch_seed = ss.spawn(3)
+    tx_real = tetraTx.RealTransmitter(real_seed)
+    tx_ideal = tetraTx.IdealTransmitter(ideal_seed)
 
     ul_tp_rf_channel = tetraPhy.PhysicalChannel(1, False, 905.1, 918.1, tetraPhy.PhyType.TRAFFIC_CHANNEL)
-    ul_cp_rf_channel = tetraPhy.PhysicalChannel(4, False, 905.2, 918.2, tetraPhy.PhyType.CONTROL_CHANNEL)
-
-    pkt_traffic_ch = tetraLch.TCH_4_8(n=4)
+    pkt_traffic_ch = tetraLch.TCH_4_8(n=4, seed_seq=log_ch_seed)
     pkt_traffic_ch.encode_type5_bits(pkt_traffic_ch.generate_rnd_input(4))
 
     ul_tp_burst = tetraPhy.NormalUplinkBurst(ul_tp_rf_channel, 1, 1, 1)
@@ -175,7 +175,7 @@ def main():
     #print(tetraMeas.tx_wideband_noise_measurement(rx_ideal.astype(np.complex64), sn0, snmax, Fs2))
 
     tetraMeas.psd_welch(rx_real, sn0, snmax, Fs2)
-    #tetraMeas.psd_welch(rx_ideal, sn0, snmax, Fs2)
+    tetraMeas.psd_welch(rx_ideal, sn0, snmax, Fs2)
 
     
     # Demonstrate .iq file saving ability

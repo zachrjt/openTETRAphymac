@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from typing import Literal
 from numpy import complex64, float64, uint8, zeros, \
     int64, concatenate, full, zeros_like, repeat, sin, cos, complex128, pad
-from numpy.random import Generator, PCG64
+from numpy.random import Generator, PCG64, SeedSequence
 from numpy.typing import NDArray
 from scipy.signal import bessel, sosfilt, sosfilt_zi
 
@@ -48,6 +48,8 @@ BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT = 30
 # Group delay of the analog processing in band for the tx chain
 TX_ANALOG_GROUP_DELAY_AT_640SPS = 126
 
+TX_NONACT_SIGNAL_LEVEL = (10**((-50.0 - 30.0)/20)) * 50
+
 ###################################################################################################
 
 
@@ -69,6 +71,8 @@ class RFTransmitter(ABC):
     """
 
     phase_reference: complex64
+    seed_seq: SeedSequence
+    _phase_noise_seed: SeedSequence
 
     rrc_filter_state: NDArray[int64 | float64]
     lpf_filter_state: NDArray[int64 | float64]
@@ -100,11 +104,18 @@ class RFTransmitter(ABC):
 
     sos = bessel(9, 100E3, btype='lowpass', analog=False, fs=float(TRANSMIT_SIMULATION_SAMPLE_RATE), output="sos")
 
-    def __init__(self):
+    def __init__(self, seed_seq: SeedSequence | None = None):
+
+        if seed_seq is None:
+            self.seed_seq = SeedSequence()
+        else:
+            self.seed_seq = seed_seq
+        _i_ch_seed, _q_ch_seed, self._phase_noise_seed = self.seed_seq.spawn(3)
+
         self.phase_reference = complex64(1 + 0j)
         self._error_generation_state = False
-        self._i_ch_generator = Generator(PCG64())
-        self._q_ch_generator = Generator(PCG64())
+        self._i_ch_generator = Generator(PCG64(_i_ch_seed))
+        self._q_ch_generator = Generator(PCG64(_q_ch_seed))
 
         self.i_ch_ofst_correction = float64(0)
         self.q_ch_ofst_correction = float64(0)
@@ -364,12 +375,10 @@ class RealTransmitter(RFTransmitter):
     dac non-linearity, I, Q channel gain and offset differences, realistic reconstruction filters, and phase noise from
     modulator LO.
     """
-    low_offset_rnd_gen: Generator
-    high_offset_rnd_gen: Generator
     mixer_phase_noise: PhaseNoiseSimulator
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.rrc_filter_state = zeros(shape=(2, len(TX_RRC_Q17_COEFFICIENTS)-1), dtype=int64)
         self.lpf_filter_state = zeros(shape=(2, len(TX_LPF_Q17_COEFFICIENTS)-1), dtype=int64)
         self.halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_Q17_COEFFICIENTS)-1), dtype=int64)
@@ -379,11 +388,9 @@ class RealTransmitter(RFTransmitter):
         self._q_bessel_state = zeros(shape=0, dtype=float64)
         self._i_bessel_state = zeros(shape=0, dtype=float64)
 
-        self.low_offset_rnd_gen = Generator(PCG64())
-        self.high_offset_rnd_gen = Generator(PCG64())
         self.mixer_phase_noise = PhaseNoiseSimulator(TRANSMIT_SIMULATION_SAMPLE_RATE,
                                                      OPENTETRAPHYMAC_TX_HW_SSB_MASK,
-                                                     self.low_offset_rnd_gen, self.high_offset_rnd_gen)
+                                                     self._phase_noise_seed)
 
         self.baseband_delay = int((self.rrc_filter_state[0].size / 2) * 8)
         self.baseband_delay += int((self.lpf_filter_state[0].size / 2) * 8)
@@ -611,8 +618,8 @@ class IdealTransmitter(RFTransmitter):
     data asides from AWGN noise. However, still uses the same order of filters as its' RealTransmitter alternative
     """
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.rrc_filter_state = zeros(shape=(2, len(TX_RRC_FLOAT_COEFFICIENTS)-1), dtype=float64)
         self.lpf_filter_state = zeros(shape=(2, len(TX_LPF_FLOAT_COEFFICIENTS)-1), dtype=float64)
         self.halfband_1_filter_state = zeros(shape=(2, len(TX_HALFBAND1_FLOAT_COEFFICIENTS)-1), dtype=float64)

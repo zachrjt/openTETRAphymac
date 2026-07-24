@@ -397,7 +397,7 @@ class RayleighProcess(ComplexGainProcess):
             self.buffer_len = pending_interp_samples
 
         # Determine how many base rate samples are required, taking into account leftover data in buffer
-        if self.buffer_len <= n_samples:
+        if self.buffer_len < n_samples:
             needed_samples = max(0, n_samples - self.buffer_len)
             buffer_used = self.buffer_len
         else:
@@ -754,7 +754,7 @@ class PropagationTap:
         self.int_delay_buffer[:] = 0.0 + 0.0j
 
         if self.h_delay_fir is not None:
-            self.h_zi[:] = 0.0 + 0.0j
+            self.h_zi[:] = complex128(0.0 + 0.0j)
 
         self.fir_startup_priming = True
 

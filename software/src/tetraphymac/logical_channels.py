@@ -5,7 +5,7 @@ MAC and perform the appropriate CRC, interleaving, encoding, and interleaving on
 are used in phyiscal channel bursts as uplink/downlink control, traffic, broadcast, or linearization blocks/subslots
 """
 from typing import Literal
-from numpy.random import randint
+from numpy.random import SeedSequence, Generator, PCG64, randint
 from numpy import uint8, array, empty
 from numpy.typing import NDArray
 
@@ -44,6 +44,16 @@ class LogicalChannelVD():
     k5 = 0            # Number of output bits per block
 
     crc_result = 0
+
+    seed_seq: SeedSequence
+    rng_gen: Generator
+
+    def __init__(self, seed_seq: SeedSequence | None = None) -> None:
+        if seed_seq is None:
+            self.seed_seq = SeedSequence()
+        else:
+            self.seed_seq = seed_seq
+        self.rng_gen = Generator(PCG64(self.seed_seq))
 
     def generate_rnd_input(self, m: int = 1) -> NDArray[uint8]:
         """
@@ -96,7 +106,8 @@ class ControlChannel(LogicalChannelVD):
     classes in burst building.
     '''
 
-    def __init__(self):
+    def __init__(self, seed_seq: SeedSequence | None = None) -> None:
+        super().__init__(seed_seq)
         self.channel_type = ChannelKind.CONTROL_TYPE
 
 ###################################################################################################
@@ -109,8 +120,8 @@ class BCCH(ControlChannel):
     The BCCH shall be a uni-directional channel for common use by all MSs.
     It shall broadcast general information to all MSs
     '''
-    def __init__(self):  # pylint: disable=useless-parent-delegation
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None) -> None:  # pylint: disable=useless-parent-delegation
+        super().__init__(seed_seq)
 
 
 class BNCH(BCCH):
@@ -119,8 +130,8 @@ class BNCH(BCCH):
 
     down-link only, broadcasts network information to MSs.
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.k1 = 124
         self.k5 = 216
         self.channel = ChannelName.BNCH_CHANNEL
@@ -190,8 +201,8 @@ class BSCH(BCCH):
 
     down-link only, broadcast information used for time and scrambling synchronization of the MSs
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.k1 = 60
         self.k5 = 120
         self.channel = ChannelName.BSCH_CHANNEL
@@ -270,8 +281,8 @@ class SCH(ControlChannel):
     requires the establishment of at least one SCH per BS. SCH may be divided into 3 categories,
     depending on the size of the message:
     '''
-    def __init__(self):  # pylint: disable=useless-parent-delegation
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):  # pylint: disable=useless-parent-delegation
+        super().__init__(seed_seq)
 
 
 class SCH_F(SCH):  # pylint: disable=invalid-name
@@ -280,8 +291,8 @@ class SCH_F(SCH):  # pylint: disable=invalid-name
 
     bidirectional channel used for full size messages.
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.k1 = 268
         self.k5 = 432
         self.channel = ChannelName.SCH_F_CHANNEL
@@ -352,8 +363,8 @@ class SCH_HD(SCH):  # pylint: disable=invalid-name
 
     downlink only, used for half size messages.
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.k1 = 124
         self.k5 = 216
         self.channel = ChannelName.SCH_HD_CHANNEL
@@ -423,8 +434,8 @@ class SCH_HU(SCH):  # pylint: disable=invalid-name
 
     uplink only, used for half size messages.
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.k1 = 92
         self.k5 = 168
         self.channel = ChannelName.SCH_HU_CHANNEL
@@ -497,8 +508,8 @@ class AACH(ControlChannel):
     indicate on each physical channel the assignment of the uplink and downlink slots.
     The AACH shall be internal to the MAC.
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.k1 = 14
         self.k5 = 30
         self.channel = ChannelName.AACH_CHANNEL
@@ -557,8 +568,8 @@ class STCH(ControlChannel):
     TCH capacity to transmit control messages. It may be used when fast signalling is required.
     In half duplex mode the STCH is unidirectional and has the same direction as the associated TCH.
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.k1 = 124
         self.k5 = 216
         self.channel = ChannelName.STCH_CHANNEL
@@ -632,7 +643,8 @@ class TrafficChannel(LogicalChannelVD):
     '''
     n = 1
 
-    def __init__(self, n: int = 1):
+    def __init__(self, n: int = 1, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.channel_type = ChannelKind.TRAFFIC_TYPE
         self.n = n
         self.k5 = 432
@@ -650,8 +662,9 @@ class TCH_S(TrafficChannel):  # pylint: disable=invalid-name
 
     def __init__(self, slot_length: Literal[SlotLength.FULL_SUBSLOT] |
                  Literal[SlotLength.HALF_SUBSLOT] = SlotLength.FULL_SUBSLOT,
-                 n: int = 1):
-        super().__init__(n)
+                 n: int = 1,
+                 seed_seq: SeedSequence | None = None):
+        super().__init__(n, seed_seq)
         self.slot_length = slot_length
         if self.slot_length not in (SlotLength.HALF_SUBSLOT, SlotLength.FULL_SUBSLOT):
             raise ValueError(f"The passed slot length value of {self.slot_length} is not of: 'half' or 'full' ")
@@ -746,8 +759,8 @@ class TCH_7_2(TrafficChannel):  # pylint: disable=invalid-name
     The traffic channels shall carry user information. Different traffic channels are defined for
     speech or data applications and for different data message speeds
     '''
-    def __init__(self, n: int = 1):
-        super().__init__(n)
+    def __init__(self, n: int = 1, seed_seq: SeedSequence | None = None):
+        super().__init__(n, seed_seq)
         if self.n not in [1]:
             raise ValueError(f"The passed n - interleaving value of {self.n}"
                              f" is not valid for {self.__class__.__name__}")
@@ -802,8 +815,8 @@ class TCH_4_8(TrafficChannel):  # pylint: disable=invalid-name
     The traffic channels shall carry user information. Different traffic channels are defined for
     speech or data applications and for different data message speeds. Interleaving of depths n = 1,4, or 8 possible.
     '''
-    def __init__(self, n: int = 1):
-        super().__init__(n)
+    def __init__(self, n: int = 1, seed_seq: SeedSequence | None = None):
+        super().__init__(n, seed_seq)
         if self.n not in [1, 4, 8]:
             raise ValueError(f"The passed n - interleaving value of {self.n}"
                              f" is not valid for {self.__class__.__name__}")
@@ -879,8 +892,8 @@ class TCH_2_4(TrafficChannel):  # pylint: disable=invalid-name
     The traffic channels shall carry user information. Different traffic channels are defined for
     speech or data applications and for different data message speeds. Interleaving of depths n = 1,4, or 8 possible.
     '''
-    def __init__(self, n: int = 1):
-        super().__init__(n)
+    def __init__(self, n: int = 1, seed_seq: SeedSequence | None = None):
+        super().__init__(n, seed_seq)
         if self.n not in [1, 4, 8]:
             raise ValueError(f"The passed n - interleaving value of {self.n}"
                              f" is not valid for {self.__class__.__name__}")
@@ -958,7 +971,8 @@ class LinearizationChannel(LogicalChannelVD):
     Parent wrapping class for the child linearization channel classes. Used to allow for easy grouping of child
     classes in burst building.
     '''
-    def __init__(self):
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.channel_type = ChannelKind.LINEARIZATION_TYPE
 
 
@@ -969,8 +983,8 @@ class CLCH(LinearizationChannel):
 
     up-link, shared by all the MSs;
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.k1 = 206
         self.k5 = 206
         self.m = 1
@@ -1013,8 +1027,8 @@ class BLCH(LinearizationChannel):
 
     downlink, used by the BS
     '''
-    def __init__(self):
-        super().__init__()
+    def __init__(self, seed_seq: SeedSequence | None = None):
+        super().__init__(seed_seq)
         self.k1 = 216
         self.k5 = 216
         self.m = 1

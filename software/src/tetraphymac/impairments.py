@@ -232,6 +232,7 @@ class ColouredNoiseGenerator:
     """
     h_coef: NDArray[float64]
     h_len: int
+    seed_seq: SeedSequence
     rng_gen: Generator
     nfft: int
 
@@ -243,7 +244,7 @@ class ColouredNoiseGenerator:
     x_f: NDArray[complex128]
     y: NDArray[float64]
 
-    def __init__(self, h_coef: NDArray[float64], nfft: int, rng_gen: Generator):
+    def __init__(self, h_coef: NDArray[float64], nfft: int, seed_seq: SeedSequence | None = None):
         """
         Initilizes the ColouredNoiseGenerator instance, does not perform any "warmup" of FIR memory, expects this to be
         handled externally by using it's .next(...) method.
@@ -253,12 +254,17 @@ class ColouredNoiseGenerator:
         :type h_coef: NDArray[float64]
         :param nfft: FIR tap coefficents used for generating coloured noise
         :type nfft: int, must be a value of 2**N
-        :param rng_gen: FIR tap coefficents used for generating coloured noise
-        :type rng_gen: Generator, a numpy.random.Generator instance of any type, PCG64 recommended
+        :param seed_seq: numpy.random SeedSequence instant for traceable randomness, or None. Used to generate noise
+         from Generator(PCG646()) objects for phase noise generation
+        :type seed_seq: SeedSequence | None, default None generates a SeedSequence internally
         """
         self.h_coef = h_coef
         self.h_len = self.h_coef.size
-        self.rng_gen = rng_gen
+        if seed_seq is None:
+            self.seed_seq = SeedSequence()
+        else:
+            self.seed_seq = seed_seq
+        self.rng_gen = Generator(PCG64(self.seed_seq))
         if nfft <= self.h_len:
             raise ValueError(f"FFT Length, {nfft}, for Coloured Noise Generation is <= Length of Colour Noise FIR:"
                              f" {self.h_len}, recommend 4x NFFT length compared to FIR tap number for FFT efficency")
@@ -326,7 +332,6 @@ class PNBandGenerator:
     f_sim: float
     factor: int
     f_gen: float
-    rng_gen: Generator
     pn_gen: ColouredNoiseGenerator
 
     upsample_fir_h: NDArray[float64]
@@ -334,7 +339,7 @@ class PNBandGenerator:
     upsample_fir_mem: NDArray[float64]
 
     def __init__(self, f_sim: float, sample_rate_factor: int, h_pn_coef: NDArray[float64],
-                 h_interpolate_coef: NDArray[float64], rng_gen: Generator | None):
+                 h_interpolate_coef: NDArray[float64], seed_seq: SeedSequence | None = None):
         """
         Initilizes the PNBandGenerator instance, does not perform any "warmup" of FIR memory, expects this to be
         handled externally by using it's warmup method.
@@ -349,15 +354,15 @@ class PNBandGenerator:
         :param h_interpolate_coef: FIR tap coefficents used interpolate coloured noise samples by sample_rate_factor to
         f_sim rate
         :type h_interpolate_coef: NDArray[float64]
-        :param rng_gen: FIR tap coefficents used for generating coloured noise
-        :type rng_gen: Generator, a numpy.random.Generator instance of any type, PCG64 recommended
+        :param seed_seq: numpy.random SeedSequence instant for traceable randomness, or None. Used to generate noise
+         for both low and high bands of phase noise
+        :type seed_seq: SeedSequence | None, default None
         """
         self.f_sim = f_sim
         self.factor = sample_rate_factor
         self.f_gen = f_sim / sample_rate_factor
-        self.rng_gen = Generator(PCG64()) if rng_gen is None else rng_gen
 
-        self.pn_gen = ColouredNoiseGenerator(h_pn_coef, (h_pn_coef.size * 4), self.rng_gen)
+        self.pn_gen = ColouredNoiseGenerator(h_pn_coef, (h_pn_coef.size * 4), seed_seq)
         self.upsample_fir_h = (self.factor *
                                h_interpolate_coef *
                                (1/np_sum(h_interpolate_coef)))
@@ -430,23 +435,24 @@ class PhaseNoiseSimulator:
     x(t) * exp(1j * phi(t)), where phi(t) is the coloured noise random process following the target SSB PSD mask.
     """
     f_sim: float
+    seed_seq: SeedSequence
 
     low_factor: int
     low_n_h: int
     low_h_coef: NDArray[float64]
     upsample_fir_low_h: NDArray[float64]
-    low_band_gen: PNBandGenerator
 
     high_factor: int
     high_n_h: int
     high_h_coef: NDArray[float64]
     upsample_fir_high_h: NDArray[float64]
-    high_band_gen: PNBandGenerator
 
-    # TODO: Rewrite to handle arbitrary sized blocks of signal instead of fixed burst timeslot size using buffers
+    _low_output_buffer: NDArray[complex128]
+    low_buffer_len: int
+    _high_output_buffer: NDArray[complex128]
+    high_buffer_len: int
 
-    def __init__(self, f_sim: int, ssb_mask: dict[str, Tuple[float, float]],
-                 rng_gen_low: Generator | None = None, rng_gen_high: Generator | None = None):
+    def __init__(self, f_sim: int, ssb_mask: dict[str, Tuple[float, float]], seed_seq: SeedSequence | None = None):
         """
         Initilizes the PhaseNoiseSimulator instance, performs warmup to fill the interpolation and coloured noise
         generation fir memories and remove filter startup transisent.
@@ -457,16 +463,26 @@ class PhaseNoiseSimulator:
         :param ssb_mask: Target SSB phase noise mask dict that contains tuples of (freq. offset in Hz, ssb in dBc/Hz)
         :type ssb_mask: dict[str, Tuple[float, float]] Example: {"10Hz": (10.0, -101.0), ...} where 10.0 is the freq.
         in units of Hz and -101.0 is the single sided PSD in units of dBc/Hz
-        :param rng_gen_low: FIR tap coefficents used for generating coloured noise
-        :type rng_gen_low: Generator, a numpy.random.Generator instance of any type, PCG64 recommended
-        :param rng_gen_high: FIR tap coefficents used for generating coloured noise
-        :type rng_gen_high: Generator, a numpy.random.Generator instance of any type, PCG64 recommended
+        :param seed_seq: numpy.random SeedSequence instant for traceable randomness, or None. Used to spawn
+         grandchildern seeds used to generate noise for both low and high bands of phase noise
+        :type seed_seq: SeedSequence | None, default None generates a SeedSequence internally
         """
         self.f_sim = float(f_sim)
         self.low_factor = 150
         self.high_factor = 4
         self.low_n_h = 2**14
         self.high_n_h = 2**12
+
+        self._low_output_buffer = empty(shape=self.low_factor-1, dtype=complex128)
+        self.low_buffer_len = 0
+        self._high_output_buffer = empty(shape=self.high_factor-1, dtype=complex128)
+        self.high_buffer_len = 0
+
+        if seed_seq is None:
+            self.seed_seq = SeedSequence()
+        else:
+            self.seed_seq = seed_seq
+        low_seed, high_seed = self.seed_seq.spawn(2)
 
         # Create FIR coefficents for band generators and unsampling filters
         self.low_h_coef, self.high_h_coef = gen_phase_noise_mask_fir(ssb_mask, self.f_sim,
@@ -478,13 +494,13 @@ class PhaseNoiseSimulator:
 
         # Initilize and warmup low and high band phase noise generators
         self.low_band_gen = PNBandGenerator(self.f_sim, self.low_factor, self.low_h_coef,
-                                            self.upsample_fir_low_h, rng_gen_low)
+                                            self.upsample_fir_low_h, low_seed)
         self.low_band_gen.warmup(5*self.low_h_coef.size)
 
         # print(f"h_low: {np_sum(self.low_h_coef**2)} vs sample variance {np_var(self.low_band_gen.generate(2**10))}")
 
         self.high_band_gen = PNBandGenerator(self.f_sim, self.high_factor, self.high_h_coef,
-                                             self.upsample_fir_high_h, rng_gen_high)
+                                             self.upsample_fir_high_h, high_seed)
         self.high_band_gen.warmup(5*self.high_h_coef.size)
 
     def apply_phase_noise(self, signal_block: NDArray[complex128]) -> NDArray[complex128]:
@@ -493,21 +509,83 @@ class PhaseNoiseSimulator:
         self.ColouredNoiseGenerator.h_coef, and upsampling by a factor self.factor and then filtering through a
         interpolation filter, self.upsample_fir_h, to get to sampling rate: self.f_sim
 
-        :param signal_block: Input signal, whose length must have a factor of 255 and 64
+        :param signal_block: Input signal
         :type signal_block: int
         :return: Returns signal_block * exp(1j * phi(f)), where phi(f) is a coloured noise approximating the target mask
         :rtype: NDArray[complex128]
         """
         # generate phase noise samples from each block, then add them
-        n_signal = signal_block.size
-        if n_signal % (255*64) != 0:  # Verify we are working in blocks at a time
-            raise ValueError(f"Passed number signal samples: {n_signal} does not align with the size of timeslots"
-                             f"'bursts: {255*64}, Recommended to check and correct filter delay handling")
+        n_samples = signal_block.size
+        # if self.low_buffer_len < n_samples:
+        #     low_needed_samples = max(0, n_samples - self.low_buffer_len)
+        #     low_buffer_used = self.low_buffer_len
+        # else:
+        #     low_needed_samples = 0
+        #     low_buffer_used = signal_block.size
+        # low_base_samples = (low_needed_samples + self.low_factor - 1) // self.low_factor
+        # if low_base_samples == 0:
+        #     low_leftover_samples = self.low_buffer_len - low_buffer_used
+        # else:
+        #     low_leftover_samples = (low_base_samples * self.low_factor) - low_needed_samples
 
-        pn_noise = self.low_band_gen.generate(n_signal//self.low_factor)
-        pn_noise += self.high_band_gen.generate(n_signal//self.high_factor)
+        def test(n: int, factor: int, buffer_len: int):
+            if buffer_len < n_samples:
+                needed_samples = max(0, n - buffer_len)
+                buffer_used = buffer_len
+            else:
+                needed_samples = 0
+                buffer_used = signal_block.size
+            base_samples = (needed_samples + factor - 1) // factor
+            if base_samples == 0:
+                leftover_samples = buffer_len - buffer_used
+            else:
+                leftover_samples = (base_samples * factor) - needed_samples
+            return needed_samples, buffer_used, base_samples, leftover_samples
+
+        low_needed_samples, low_buffer_used, low_base_samples, low_leftover_samples = test(n_samples,
+                                                                                           self.low_factor,
+                                                                                           self.low_buffer_len)
+        high_needed_samples, high_buffer_used, high_base_samples, high_leftover_samples = test(n_samples,
+                                                                                               self.high_factor,
+                                                                                               self.high_buffer_len)
+        # if self.high_buffer_len < n_samples:
+        #     high_needed_samples = max(0, n_samples - self.high_buffer_len)
+        #     high_buffer_used = self.high_buffer_len
+        # else:
+        #     high_needed_samples = 0
+        #     high_buffer_used = signal_block.size
+        # high_base_samples = (high_needed_samples + self.high_factor - 1) // self.high_factor
+        # if high_base_samples == 0:
+        #     high_leftover_samples = self.high_buffer_len - high_buffer_used
+        # else:
+        #     high_leftover_samples = (high_base_samples * self.high_factor) - high_needed_samples
+
+        pn_array = zeros(shape=(n_samples), dtype=complex128)
+        pn_array[:low_buffer_used] = self._low_output_buffer[:low_buffer_used]
+        if low_base_samples != 0:
+            # Generate base rate samples of the process
+            y = self.low_band_gen.generate(low_base_samples)
+            pn_array[low_buffer_used:] += y[:low_needed_samples]
+            self._low_output_buffer[:low_leftover_samples] = y[low_needed_samples:]
+            self.low_buffer_len = low_leftover_samples
+        else:
+            self._low_output_buffer[:low_leftover_samples] = self._low_output_buffer[low_buffer_used:
+                                                                                     self.low_buffer_len]
+            self.low_buffer_len = low_leftover_samples
+
+        pn_array[:high_buffer_used] += self._high_output_buffer[:high_buffer_used]
+        if high_base_samples != 0:
+            # Generate base rate samples of the process
+            y = self.high_band_gen.generate(high_base_samples)
+            pn_array[high_buffer_used:] += y[:high_needed_samples]
+            self._high_output_buffer[:high_leftover_samples] = y[high_needed_samples:]
+            self.high_buffer_len = high_leftover_samples
+        else:
+            self._high_output_buffer[:high_leftover_samples] = self._high_output_buffer[high_buffer_used:
+                                                                                        self.high_buffer_len]
+            self.high_buffer_len = high_leftover_samples
 
         # apply phase noise to signal, using vector multiplication
-        return (signal_block.reshape(-1) * exp(1j * pn_noise)).reshape(signal_block.shape)
+        return (signal_block.reshape(-1) * exp(1j * pn_array)).reshape(signal_block.shape)
 
 ###################################################################################################
