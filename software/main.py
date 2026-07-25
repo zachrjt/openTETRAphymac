@@ -142,7 +142,7 @@ def main():
     tx_real = tetraTx.RealTransmitter(real_seed)
     tx_ideal = tetraTx.IdealTransmitter(ideal_seed)
 
-    ul_tp_rf_channel = tetraPhy.PhysicalChannel(1, False, 905.1, 918.1, tetraPhy.PhyType.TRAFFIC_CHANNEL)
+    ul_tp_rf_channel = tetraPhy.PhysicalChannel("TP")
     pkt_traffic_ch = tetraLch.TCH_4_8(n=4, seed_seq=log_ch_seed)
     pkt_traffic_ch.encode_type5_bits(pkt_traffic_ch.generate_rnd_input(4))
 
@@ -154,7 +154,7 @@ def main():
 
     rx_ideal = tx_ideal.transmit_burst(burst_modulation_bits,
                                        (ul_tp_burst.start_ramp_period, ul_tp_burst.end_ramp_period))
-    Fs2 = tetraConstants.TX_BB_SAMPLING_FACTOR * tetraTx.TETRA_SYMBOL_RATE * tetraTx.TRANSMIT_SIMULATION_SAMPLING_FACTOR
+    Fs2 = tetraConstants.TETRA_TX_SIMULATION_SAMPLE_RATE
     
     # Envelope comparison
     power_envelope(rx_real, rx_ideal, Fs2, True)
@@ -166,13 +166,9 @@ def main():
 
     print("Real digital tx ACPR results:")
     print(tetraMeas.tx_acpr_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
-    #print("Ideal digital tx ACPR results:")
-    #print(tetraMeas.tx_acpr_measurement(rx_ideal.astype(np.complex64), sn0, snmax, Fs2))
 
     print("Real digital tx Wideband Noise results:")
     print(tetraMeas.tx_wideband_noise_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
-    #print("Ideal digital tx Wideband Noise results:")
-    #print(tetraMeas.tx_wideband_noise_measurement(rx_ideal.astype(np.complex64), sn0, snmax, Fs2))
 
     tetraMeas.psd_welch(rx_real, sn0, snmax, Fs2)
     tetraMeas.psd_welch(rx_ideal, sn0, snmax, Fs2)

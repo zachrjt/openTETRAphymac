@@ -4,7 +4,7 @@ for bursts and exist at the upper PHY layer, their purpose is to take in control
 MAC and perform the appropriate CRC, interleaving, encoding, and interleaving on data before the resultant type 5 blocks
 are used in phyiscal channel bursts as uplink/downlink control, traffic, broadcast, or linearization blocks/subslots
 """
-from typing import Literal
+from typing import Literal, ClassVar
 from numpy.random import SeedSequence, Generator, PCG64, randint
 from numpy import uint8, array, empty
 from numpy.typing import NDArray
@@ -16,6 +16,7 @@ from .coding_scrambling import crc16_decoder, crc16_encoder, rcpc_decoder, rcpc_
 
 # Per EN 300 392-2 V2.4.2 - 8.3
 LOGICAL_CH_TAIL_BITS = array([0, 0, 0, 0], uint8)  # The zero-valued tail bits appended to type-1 bits
+EMPTY_UINT8 = empty((0, 0), dtype=uint8)
 
 
 class LogicalChannelVD():
@@ -27,6 +28,18 @@ class LogicalChannelVD():
         2. a method to construct type-1 bits in type 1 blocks from
         type-5 recieved bits in type-5 blocks from PHY
     '''
+    __slots__ = (
+        "type_1_blocks",
+        "type_2_blocks",
+        "type_3_blocks",
+        "type_4_blocks",
+        "type_5_blocks",
+        "m",
+        "n",
+        "crc_result",
+        "seed_seq",
+        "rng_gen"
+    )
 
     # attributes contain the various types of bits, all are stored for now for analysis when needed
     type_5_blocks: NDArray[uint8]
@@ -35,20 +48,26 @@ class LogicalChannelVD():
     type_2_blocks: NDArray[uint8]
     type_1_blocks: NDArray[uint8]
 
-    channel = ""      # Describes the written name of the logical channel
-    channel_type = ""  # Channel type either traffic or control
+    channel: ClassVar[str] = ""      # Describes the written name of the logical channel
+    channel_type: ClassVar[str] = ""  # Channel type either traffic or control
 
-    m = 0             # Number of input blocks
+    k1: int            # Number of input bits per block
+    k5: int            # Number of output bits per block
 
-    k1 = 0            # Number of input bits per block
-    k5 = 0            # Number of output bits per block
-
-    crc_result = 0
+    crc_result: int
 
     seed_seq: SeedSequence
     rng_gen: Generator
 
     def __init__(self, seed_seq: SeedSequence | None = None) -> None:
+        self.type_1_blocks = EMPTY_UINT8
+        self.type_2_blocks = EMPTY_UINT8
+        self.type_3_blocks = EMPTY_UINT8
+        self.type_4_blocks = EMPTY_UINT8
+        self.type_5_blocks = EMPTY_UINT8
+
+        self.m = 0
+        self.crc_result = 0
         if seed_seq is None:
             self.seed_seq = SeedSequence()
         else:
@@ -105,10 +124,11 @@ class ControlChannel(LogicalChannelVD):
     Parent wrapping class for the various child control channel classes. Used to allow for easy grouping of child
     classes in burst building.
     '''
+    __slots__ = ()
+    channel_type = ChannelKind.CONTROL_TYPE
 
     def __init__(self, seed_seq: SeedSequence | None = None) -> None:
         super().__init__(seed_seq)
-        self.channel_type = ChannelKind.CONTROL_TYPE
 
 ###################################################################################################
 
@@ -120,6 +140,8 @@ class BCCH(ControlChannel):
     The BCCH shall be a uni-directional channel for common use by all MSs.
     It shall broadcast general information to all MSs
     '''
+    __slots__ = ()
+
     def __init__(self, seed_seq: SeedSequence | None = None) -> None:  # pylint: disable=useless-parent-delegation
         super().__init__(seed_seq)
 
@@ -130,11 +152,14 @@ class BNCH(BCCH):
 
     down-link only, broadcasts network information to MSs.
     '''
+    __slots__ = ()
+
+    k1 = 124
+    k5 = 216
+    channel = ChannelName.BNCH_CHANNEL
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.k1 = 124
-        self.k5 = 216
-        self.channel = ChannelName.BNCH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -201,11 +226,13 @@ class BSCH(BCCH):
 
     down-link only, broadcast information used for time and scrambling synchronization of the MSs
     '''
+    __slots__ = ()
+    k1 = 60
+    k5 = 120
+    channel = ChannelName.BSCH_CHANNEL
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.k1 = 60
-        self.k5 = 120
-        self.channel = ChannelName.BSCH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -281,6 +308,8 @@ class SCH(ControlChannel):
     requires the establishment of at least one SCH per BS. SCH may be divided into 3 categories,
     depending on the size of the message:
     '''
+    __slots__ = ()
+
     def __init__(self, seed_seq: SeedSequence | None = None):  # pylint: disable=useless-parent-delegation
         super().__init__(seed_seq)
 
@@ -291,11 +320,13 @@ class SCH_F(SCH):  # pylint: disable=invalid-name
 
     bidirectional channel used for full size messages.
     '''
+    __slots__ = ()
+    k1 = 268
+    k5 = 432
+    channel = ChannelName.SCH_F_CHANNEL
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.k1 = 268
-        self.k5 = 432
-        self.channel = ChannelName.SCH_F_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -363,11 +394,13 @@ class SCH_HD(SCH):  # pylint: disable=invalid-name
 
     downlink only, used for half size messages.
     '''
+    __slots__ = ()
+    k1 = 124
+    k5 = 216
+    channel = ChannelName.SCH_HD_CHANNEL
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.k1 = 124
-        self.k5 = 216
-        self.channel = ChannelName.SCH_HD_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -434,11 +467,13 @@ class SCH_HU(SCH):  # pylint: disable=invalid-name
 
     uplink only, used for half size messages.
     '''
+    __slots__ = ()
+    k1 = 92
+    k5 = 168
+    channel = ChannelName.SCH_HU_CHANNEL
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.k1 = 92
-        self.k5 = 168
-        self.channel = ChannelName.SCH_HU_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -508,11 +543,13 @@ class AACH(ControlChannel):
     indicate on each physical channel the assignment of the uplink and downlink slots.
     The AACH shall be internal to the MAC.
     '''
+    __slots__ = ()
+    k1 = 14
+    k5 = 30
+    channel = ChannelName.AACH_CHANNEL
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.k1 = 14
-        self.k5 = 30
-        self.channel = ChannelName.AACH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -568,11 +605,13 @@ class STCH(ControlChannel):
     TCH capacity to transmit control messages. It may be used when fast signalling is required.
     In half duplex mode the STCH is unidirectional and has the same direction as the associated TCH.
     '''
+    __slots__ = ()
+    k1 = 124
+    k5 = 216
+    channel = ChannelName.STCH_CHANNEL
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.k1 = 124
-        self.k5 = 216
-        self.channel = ChannelName.STCH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -641,13 +680,13 @@ class TrafficChannel(LogicalChannelVD):
     Parent wrapping class for the child traffic channel classes. Used to allow for easy grouping of child classes in
     burst building.
     '''
-    n = 1
+    __slots__ = ()
+    channel_type = ChannelKind.TRAFFIC_TYPE
+    k5 = 432
 
     def __init__(self, n: int = 1, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.channel_type = ChannelKind.TRAFFIC_TYPE
         self.n = n
-        self.k5 = 432
         if self.n not in [1, 2, 4, 8]:
             raise ValueError(f"The passed n - interleaving value of {self.n} is not valid.")
 
@@ -659,6 +698,7 @@ class TCH_S(TrafficChannel):  # pylint: disable=invalid-name
     The traffic channels shall carry user information, defined for speech.
     '''
     slot_length = ""
+    channel = ChannelName.TCH_S_CHANNEL
 
     def __init__(self, slot_length: Literal[SlotLength.FULL_SUBSLOT] |
                  Literal[SlotLength.HALF_SUBSLOT] = SlotLength.FULL_SUBSLOT,
@@ -673,7 +713,6 @@ class TCH_S(TrafficChannel):  # pylint: disable=invalid-name
                              f" is not valid for {self.__class__.__name__}")
         self.k1 = 432 if self.slot_length == SlotLength.FULL_SUBSLOT else 216
         self.k5 = 432 if self.slot_length == SlotLength.FULL_SUBSLOT else 216
-        self.channel = ChannelName.TCH_S_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -759,13 +798,16 @@ class TCH_7_2(TrafficChannel):  # pylint: disable=invalid-name
     The traffic channels shall carry user information. Different traffic channels are defined for
     speech or data applications and for different data message speeds
     '''
+    __slots__ = ()
+    k1 = 432
+    k5 = 432
+    channel = ChannelName.TCH_7_2_CHANNEL
+
     def __init__(self, n: int = 1, seed_seq: SeedSequence | None = None):
         super().__init__(n, seed_seq)
         if self.n not in [1]:
             raise ValueError(f"The passed n - interleaving value of {self.n}"
                              f" is not valid for {self.__class__.__name__}")
-        self.k1 = 432
-        self.channel = ChannelName.TCH_7_2_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -815,13 +857,16 @@ class TCH_4_8(TrafficChannel):  # pylint: disable=invalid-name
     The traffic channels shall carry user information. Different traffic channels are defined for
     speech or data applications and for different data message speeds. Interleaving of depths n = 1,4, or 8 possible.
     '''
+    __slots__ = ()
+    k1 = 288
+    k5 = 432
+    channel = ChannelName.TCH_4_8_CHANNEL
+
     def __init__(self, n: int = 1, seed_seq: SeedSequence | None = None):
         super().__init__(n, seed_seq)
         if self.n not in [1, 4, 8]:
             raise ValueError(f"The passed n - interleaving value of {self.n}"
                              f" is not valid for {self.__class__.__name__}")
-        self.k1 = 288
-        self.channel = ChannelName.TCH_4_8_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -892,13 +937,16 @@ class TCH_2_4(TrafficChannel):  # pylint: disable=invalid-name
     The traffic channels shall carry user information. Different traffic channels are defined for
     speech or data applications and for different data message speeds. Interleaving of depths n = 1,4, or 8 possible.
     '''
+    __slots__ = ()
+    k1 = 144
+    k5 = 432
+    channel = ChannelName.TCH_2_4_CHANNEL
+
     def __init__(self, n: int = 1, seed_seq: SeedSequence | None = None):
         super().__init__(n, seed_seq)
         if self.n not in [1, 4, 8]:
             raise ValueError(f"The passed n - interleaving value of {self.n}"
                              f" is not valid for {self.__class__.__name__}")
-        self.k1 = 144
-        self.channel = ChannelName.TCH_2_4_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -971,9 +1019,11 @@ class LinearizationChannel(LogicalChannelVD):
     Parent wrapping class for the child linearization channel classes. Used to allow for easy grouping of child
     classes in burst building.
     '''
+    __slots__ = ()
+    channel_type = ChannelKind.LINEARIZATION_TYPE
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.channel_type = ChannelKind.LINEARIZATION_TYPE
 
 
 ###################################################################################################
@@ -983,12 +1033,14 @@ class CLCH(LinearizationChannel):
 
     up-link, shared by all the MSs;
     '''
+    __slots__ = ()
+    k1 = 206
+    k5 = 206
+    channel = ChannelName.CLCH_CHANNEL
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.k1 = 206
-        self.k5 = 206
         self.m = 1
-        self.channel = ChannelName.CLCH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -1027,12 +1079,14 @@ class BLCH(LinearizationChannel):
 
     downlink, used by the BS
     '''
+    __slots__ = ()
+    k1 = 216
+    k5 = 216
+    channel = ChannelName.BLCH_CHANNEL
+
     def __init__(self, seed_seq: SeedSequence | None = None):
         super().__init__(seed_seq)
-        self.k1 = 216
-        self.k5 = 216
         self.m = 1
-        self.channel = ChannelName.BLCH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """

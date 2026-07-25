@@ -13,7 +13,7 @@ from scipy.signal import welch
 from scipy.signal import sosfilt as sp_sosfilt, lfilter as sp_lfilter
 import matplotlib.pyplot as plt
 
-from .transmitter import TETRA_SYMBOL_RATE
+from .constants import TETRA_SYMBOL_RATE
 
 ACPR_OFFSETS_TETRA_SPEC_DICT = {"25 kHz": (25E3, -55, -36), "-25 kHz": (-25E3, -55, -36),
                                 "50 kHz": (50E3, -65, -36), "-50 kHz": (-50E3, -65, -36),

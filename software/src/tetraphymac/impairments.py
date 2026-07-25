@@ -516,17 +516,6 @@ class PhaseNoiseSimulator:
         """
         # generate phase noise samples from each block, then add them
         n_samples = signal_block.size
-        # if self.low_buffer_len < n_samples:
-        #     low_needed_samples = max(0, n_samples - self.low_buffer_len)
-        #     low_buffer_used = self.low_buffer_len
-        # else:
-        #     low_needed_samples = 0
-        #     low_buffer_used = signal_block.size
-        # low_base_samples = (low_needed_samples + self.low_factor - 1) // self.low_factor
-        # if low_base_samples == 0:
-        #     low_leftover_samples = self.low_buffer_len - low_buffer_used
-        # else:
-        #     low_leftover_samples = (low_base_samples * self.low_factor) - low_needed_samples
 
         def test(n: int, factor: int, buffer_len: int):
             if buffer_len < n_samples:
@@ -548,18 +537,6 @@ class PhaseNoiseSimulator:
         high_needed_samples, high_buffer_used, high_base_samples, high_leftover_samples = test(n_samples,
                                                                                                self.high_factor,
                                                                                                self.high_buffer_len)
-        # if self.high_buffer_len < n_samples:
-        #     high_needed_samples = max(0, n_samples - self.high_buffer_len)
-        #     high_buffer_used = self.high_buffer_len
-        # else:
-        #     high_needed_samples = 0
-        #     high_buffer_used = signal_block.size
-        # high_base_samples = (high_needed_samples + self.high_factor - 1) // self.high_factor
-        # if high_base_samples == 0:
-        #     high_leftover_samples = self.high_buffer_len - high_buffer_used
-        # else:
-        #     high_leftover_samples = (high_base_samples * self.high_factor) - high_needed_samples
-
         pn_array = zeros(shape=(n_samples), dtype=complex128)
         pn_array[:low_buffer_used] = self._low_output_buffer[:low_buffer_used]
         if low_base_samples != 0:

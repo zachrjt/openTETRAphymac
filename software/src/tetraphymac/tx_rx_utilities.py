@@ -12,7 +12,7 @@ from numpy import abs as np_abs
 from numpy import max as np_max
 from numpy import round as np_round
 from numpy.typing import NDArray
-from scipy.signal import convolve as sp_convolve
+from scipy.signal import convolve as sp_convolve, upfirdn as sp_upfirdn
 
 from .constants import TX_BB_SAMPLING_FACTOR
 
@@ -489,7 +489,7 @@ def q17_rounding(accumulated_results: NDArray[int64],
 
 def dsp_fir_i_q_stream_convolve(i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64],
                                 h_coefficients: NDArray[int64 | float64],
-                                input_fir_state: NDArray[int64 | float64] | None = None,
+                                input_fir_state: NDArray[int64 | float64],
                                 gain: Literal[1] | Literal[2] | Literal[4] | Literal[8] = 1
                                 ) -> tuple[NDArray[int64 | float64], NDArray[int64 | float64],
                                            NDArray[int64 | float64], NDArray[int64 | float64]]:
@@ -530,10 +530,6 @@ def dsp_fir_i_q_stream_convolve(i_ch: NDArray[int64 | float64], q_ch: NDArray[in
         raise RuntimeError(f"Mismatched i and h coefficents types passed, h_coefficents: {h_coefficients.dtype}"
                            f", expected {data_type} to match")
 
-    if input_fir_state is not None and data_type != input_fir_state.dtype:
-        raise RuntimeError(f"Mismatched i and input_fir_state_1 types passed, h_coefficents: {input_fir_state.dtype}"
-                           f", expected {data_type} to match")
-
     if gain not in [1, 2, 4, 8]:
         raise ValueError(f"Passed gain value: {gain}, is not 1 or multiple of 2.")
 
@@ -545,18 +541,14 @@ def dsp_fir_i_q_stream_convolve(i_ch: NDArray[int64 | float64], q_ch: NDArray[in
     q_fir_state = zeros(shape=n_taps, dtype=data_type)
 
     for i, ch in enumerate((i_ch, q_ch)):
-
-        if input_fir_state is not None:
-            if input_fir_state.ndim != 2:
-                # if we only passed i_ch, then input_fir_state may just be 1-dimensional
-                fir_state = input_fir_state.copy() if i == 1 else zeros(shape=(n_taps-1), dtype=data_type)
-            else:
-                if input_fir_state.shape[1] != (n_taps - 1):
-                    raise ValueError(f"Length of FIR state passed is {input_fir_state.shape[1]},"
-                                     f" expected {(n_taps - 1)} based on h_coefficients passed.")
-                fir_state = input_fir_state[i].copy()
+        if input_fir_state.ndim != 2:
+            # if we only passed i_ch, then input_fir_state may just be 1-dimensional
+            fir_state = input_fir_state.copy() if i == 1 else zeros(shape=(n_taps-1), dtype=data_type)
         else:
-            fir_state = zeros(shape=(n_taps-1), dtype=data_type)
+            if input_fir_state.shape[1] != (n_taps - 1):
+                raise ValueError(f"Length of FIR state passed is {input_fir_state.shape[1]},"
+                                 f" expected {(n_taps - 1)} based on h_coefficients passed.")
+            fir_state = input_fir_state[i].copy()
         # Prepend the state values, burst isolation flushes are handled externally to the function
         input_data_extended: NDArray[int64 | float64]
         input_data_extended = concatenate((fir_state, ch))
@@ -727,6 +719,86 @@ def dsp_fir_float_stream(input_symbols: NDArray[float64], h_coefficients: NDArra
     return burst_segment, new_fir_state
 
 ###################################################################################################
+
+
+def dsp_upfirdn(i_ch: NDArray[int64 | float64], q_ch: NDArray[int64 | float64],
+                h_coefficients: NDArray[int64 | float64],
+                input_fir_state: NDArray[int64 | float64] | None = None,
+                upsample_factor: Literal[1] | Literal[2] | Literal[4] | Literal[8] = 1):
+
+    data_type = i_ch.dtype
+    if data_type != q_ch.dtype:
+        raise RuntimeError(f"Mismatched i and q data types passed, q_ch type: {q_ch.dtype}"
+                           f", expected {data_type} to match")
+
+    if data_type != h_coefficients.dtype:
+        raise RuntimeError(f"Mismatched i and h coefficents types passed, h_coefficents: {h_coefficients.dtype}"
+                           f", expected {data_type} to match")
+
+    if input_fir_state is not None and data_type != input_fir_state.dtype:
+        raise RuntimeError(f"Mismatched i and input_fir_state_1 types passed, h_coefficents: {input_fir_state.dtype}"
+                           f", expected {data_type} to match")
+
+    if upsample_factor not in [1, 2, 4, 8]:
+        raise ValueError(f"Passed upsample factor: {upsample_factor}, is not 1 or multiple of 2.")
+
+    n_taps = h_coefficients.size
+
+    i_ch_output = zeros(shape=i_ch.shape, dtype=data_type)
+    i_fir_state = zeros(shape=n_taps, dtype=data_type)
+    q_ch_output = zeros(shape=q_ch.shape, dtype=data_type)
+    q_fir_state = zeros(shape=n_taps, dtype=data_type)
+
+    for i, ch in enumerate((i_ch, q_ch)):
+
+        if input_fir_state is not None:
+            if input_fir_state.ndim != 2:
+                # if we only passed i_ch, then input_fir_state may just be 1-dimensional
+                fir_state = input_fir_state.copy() if i == 1 else zeros(shape=(n_taps-1), dtype=data_type)
+            else:
+                if input_fir_state.shape[1] != (n_taps - 1):
+                    raise ValueError(f"Length of FIR state passed is {input_fir_state.shape[1]},"
+                                     f" expected {(n_taps - 1)} based on h_coefficients passed.")
+                fir_state = input_fir_state[i].copy()
+        else:
+            fir_state = zeros(shape=(n_taps-1), dtype=data_type)
+        # Prepend the state values, burst isolation flushes are handled externally to the function
+        input_data_extended: NDArray[int64 | float64]
+        input_data_extended = concatenate((fir_state, ch))
+
+        # Stream the convolution results, note that prepended values come from state/memory of FIR from previous burst
+        full_accumulated_result = sp_upfirdn(h_coefficients, input_data_extended, up=upsample_factor).astype(data_type)
+
+        # Data-aligned segment:
+        burst_segment = full_accumulated_result[(n_taps-1):(n_taps-1 + i_ch.size)].copy()
+        # The rounding implemented is not pure unbiased rounding due to behaviour with negative values,
+        # however it provides greater precision than pure truncation and follow ECP5 DSP slices implementation
+
+        if upsample_factor == 1:
+            shift_value = NUMBER_OF_FRACTIONAL_BITS
+        else:
+            shift_value = int(NUMBER_OF_FRACTIONAL_BITS - (upsample_factor // 2))
+
+        if burst_segment.dtype == int64:
+            output_accumulated_result = \
+                q17_rounding(burst_segment, right_shift_number=shift_value)  # type: ignore[arg-type]
+
+            # Saturate output incase of clipping, it is not expected for this to occur due to the FIR gains and such
+            output_accumulated_result = clip(output_accumulated_result, -(1 << NUMBER_OF_FRACTIONAL_BITS),
+                                             (1 << NUMBER_OF_FRACTIONAL_BITS)-1).astype(int64)
+        else:
+            output_accumulated_result = burst_segment * upsample_factor
+        # The new state of the FIR is the last n_taps-1 values of what was passed
+        new_fir_state = input_data_extended[-(n_taps-1):].copy()
+
+        if i == 0:
+            i_ch_output = output_accumulated_result
+            i_fir_state = new_fir_state
+        else:
+            q_ch_output = output_accumulated_result
+            q_fir_state = new_fir_state
+
+    return i_ch_output, q_ch_output, i_fir_state, q_fir_state
 
 
 def power_ramping_quantized(i_ch: NDArray[int64], q_ch: NDArray[int64],

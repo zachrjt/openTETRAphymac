@@ -33,7 +33,8 @@ from .tx_rx_utilities import power_ramping_float, \
     OPENTETRAPHYMAC_TX_HW_SSB_MASK
 
 
-from .constants import SUBSLOT_BIT_LENGTH, TX_BB_SAMPLING_FACTOR, TRANSMIT_SIMULATION_SAMPLING_FACTOR, TETRA_SYMBOL_RATE
+from .constants import SUBSLOT_BIT_LENGTH, TX_BB_SAMPLING_FACTOR, TRANSMIT_SIMULATION_SAMPLING_FACTOR, \
+                       TETRA_TX_SIMULATION_SAMPLE_RATE
 from .modulation import dqpsk_modulator
 from .impairments import PhaseNoiseSimulator
 
@@ -41,8 +42,6 @@ VALID_RETURN_STAGE_VALUES = ("baseband", "dac", "tx")  # possible output stages 
 HALF_BASEBAND_SAMPLING_FACTOR = TX_BB_SAMPLING_FACTOR // 2   # Half of the culmative baseband sampling factor
 ZOH_DELAY = TRANSMIT_SIMULATION_SAMPLING_FACTOR // 2  # The sample delay arising from using ZOH
 
-# Internal sw simulator sampling rate, allows for capture of harmonics
-TRANSMIT_SIMULATION_SAMPLE_RATE = int(TX_BB_SAMPLING_FACTOR * TETRA_SYMBOL_RATE * TRANSMIT_SIMULATION_SAMPLING_FACTOR)
 # Number of base sample rampe sames used to prepend and post bend burst data to clear FIR memory states
 BASE_SAMPLE_RATE_ZERO_FIR_FLUSH_COUNT = 30
 # Group delay of the analog processing in band for the tx chain
@@ -102,7 +101,7 @@ class RFTransmitter(ABC):
 
     baseband_delay: int
 
-    sos = bessel(9, 100E3, btype='lowpass', analog=False, fs=float(TRANSMIT_SIMULATION_SAMPLE_RATE), output="sos")
+    sos = bessel(9, 100E3, btype='lowpass', analog=False, fs=float(TETRA_TX_SIMULATION_SAMPLE_RATE), output="sos")
 
     def __init__(self, seed_seq: SeedSequence | None = None):
 
@@ -388,7 +387,7 @@ class RealTransmitter(RFTransmitter):
         self._q_bessel_state = zeros(shape=0, dtype=float64)
         self._i_bessel_state = zeros(shape=0, dtype=float64)
 
-        self.mixer_phase_noise = PhaseNoiseSimulator(TRANSMIT_SIMULATION_SAMPLE_RATE,
+        self.mixer_phase_noise = PhaseNoiseSimulator(TETRA_TX_SIMULATION_SAMPLE_RATE,
                                                      OPENTETRAPHYMAC_TX_HW_SSB_MASK,
                                                      self._phase_noise_seed)
 
@@ -556,7 +555,7 @@ class RealTransmitter(RFTransmitter):
                                ) -> NDArray[complex128]:
         """
         Takes in DAC codes at rate Rs, converts to real floats with ZOH with
-        sampling rate Rif which is x8 more than Rs, then filters with analog reconstruction filter.
+        sampling rate Rif which is x10 more than Rs, then filters with analog reconstruction filter.
 
         Then converts I and Q channels to real data modeling phase error in quadrature modulation
         """
@@ -614,8 +613,8 @@ class RealTransmitter(RFTransmitter):
 class IdealTransmitter(RFTransmitter):
     """
     Implementation of the parent RFTransmitter base class which uses non-quantized float data in its'
-    baseband processing method and adds very little non-linearities and errors to output transmission
-    data asides from AWGN noise. However, still uses the same order of filters as its' RealTransmitter alternative
+    baseband processing method and adds very little non-linearities and errors to output transmission.
+    However, still uses the same order of filters as its' RealTransmitter alternative
     """
 
     def __init__(self, seed_seq: SeedSequence | None = None):
@@ -749,7 +748,7 @@ class IdealTransmitter(RFTransmitter):
                                ) -> NDArray[complex128]:
         """
         Takes in DAC codes at rate Rs, converts to real floats with ZOH with
-        sampling rate Rif which is x8 more than Rs, then filters with analog reconstruction filter.
+        sampling rate Rif which is x10 more than Rs, then filters with analog reconstruction filter.
 
         Does not model gain or offset errors, coupling, phase noise or LO leakage
         """

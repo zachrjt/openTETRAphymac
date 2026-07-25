@@ -22,7 +22,7 @@ from numpy.typing import NDArray
 
 from .constants import CONTROL_FRAME_NUMBER, HYPERFRAME_MULTIFRAME_LENGTH, MULTIFRAME_TDMAFRAME_LENGTH, \
     TDMAFRAME_TIMESLOT_LENGTH, TIMESLOT_BIT_LENGTH, TIMESLOT_SUBSLOT_LENGTH, PhyType, LinkDirection, BurstContent, \
-    ChannelKind, ChannelName
+    ChannelKind, ChannelName, OPENTETRAPHYMAC_DEFAULT_TX_FREQUENCY, OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY
 from .logical_channels import BLCH, BNCH, BSCH, CLCH, SCH_HD, SCH_F, SCH_HU, AACH, LogicalChannelVD, \
     TrafficChannel, STCH
 from .modulation import calculate_phase_adjustment_bits
@@ -58,26 +58,35 @@ PHASE_ADJUSTMENT_SYMBOL_RANGE = {"a": (7, 121), "b": (122, 248), "c": (7, 107), 
 ###################################################################################################
 @dataclass(frozen=True, slots=True)
 class PhysicalChannel():
-    channel_number: int          # The channel number ""
-    main_carrier: bool           # If the carrier used is considered the "mainCarrier"
-    ul_frequency: float         # The UL frequency for MS->BS tx
-    dl_frequency: float         # The DL frequency for BS->MS tx
     channel_type: PhyType        # The type of physical channel (CP,TP,UP)
+    channel_number: int = 1      # The channel number
+    main_carrier: bool = False   # If the carrier used is considered the "mainCarrier"
+    ul_frequency: float = OPENTETRAPHYMAC_DEFAULT_TX_FREQUENCY      # The UL frequency for MS->BS tx
+    dl_frequency: float = OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY      # The DL frequency for BS->MS tx
 ###################################################################################################
 
 
 class Burst():
-    # require class-level "spec constants"
+    __slots__ = (
+        "burst_type",
+        "phy_channel",
+        "multiframe_number",
+        "frame_number",
+        "timeslot",
+        "subslot",
+        "mixed_burst",
+        "start_ramp_period",
+        "end_ramp_period",
+    )
+    # class constants
     sn_max: ClassVar[int]                   # Max number of modulation symbols in burst
     start_guard_bit_period: ClassVar[int]     # The initial guard period / delay in bits (default)
     end_guard_bit_period: ClassVar[int]       # The end guard period in bits (default)
     subslot_width: ClassVar[int]                # How many subslots does the burst take up: 1 or 2
     link_direction: ClassVar[LinkDirection]     # either DL or UL
+    ALLOWED_PHY: ClassVar[set[PhyType]]         # Permissible physical channel types for the burst class
 
-    # Permissible physical channel types for the burst class
-    ALLOWED_PHY: ClassVar[set[PhyType]]
-
-    # per instance runtime variables
+    # instance variables
     burst_type: BurstContent        # either traffic, control, or mixed
     phy_channel: PhyType            # The physical RF channel type (CP,TP,UP) that the burst utilizes
     mixed_burst: bool               # if the burst has 1 or more blocks/subslots stolen for control or a composite burst
@@ -85,15 +94,13 @@ class Burst():
     frame_number: int               # The frame number of the burst
     timeslot: int                   # The TDMA time slot number of the burst
     subslot: int                    # The subslot which the burst starts in and occupies atleast
-
-    # Variable versions of start/end_guard_bit_period
-    # that allow for dynamic ramping based on if we have continuous data
-    start_ramp_period: int
-    end_ramp_period: int
+    start_ramp_period: int  # Variable versions of start/end_guard_bit_period
+    end_ramp_period: int    # that allow for dynamic ramping based on if we have continuous data
 
     def __init__(self, phy_channel: PhysicalChannel, mn: int, fn: int, tn: int, ssn: int = 1):
         self._validate_class_constants()
         # store runtime state
+        self.burst_type = BurstContent.BURST_UNKNOWN_TYPE
         self.phy_channel = phy_channel.channel_type
         self.multiframe_number = mn
         self.frame_number = fn
@@ -136,16 +143,17 @@ class Burst():
 
 
 class ControlUplink(Burst):
+    __slots__ = ()
     sn_max = 103
     start_guard_bit_period = 34
     end_guard_bit_period = 15
     subslot_width = 1
     link_direction = LinkDirection.UPLINK
-    burst_type = BurstContent.BURST_CONTROL_TYPE
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL}
 
     def construct_burst_sequence(self, input_logical_ch_ssn1: SCH_HU) -> NDArray[uint8]:
+        self.burst_type = BurstContent.BURST_CONTROL_TYPE
         # Must verify specific non-common TN/FN based on physical channel
         if self.phy_channel == PhyType.CONTROL_CHANNEL:
             if not 1 <= self.frame_number <= MULTIFRAME_TDMAFRAME_LENGTH:
@@ -179,13 +187,12 @@ class ControlUplink(Burst):
 
 
 class NormalUplinkBurst(Burst):
-
+    __slots__ = ()
     sn_max = 231
     start_guard_bit_period = 34
     end_guard_bit_period = 14
     subslot_width = 2
     link_direction = LinkDirection.UPLINK
-    burst_type = BurstContent.BURST_MIXED_TYPE
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL}
 
@@ -480,12 +487,12 @@ class NormalDownlinkMixin:
 
 
 class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
+    __slots__ = ()
     sn_max = 255
     start_guard_bit_period = 0
     end_guard_bit_period = 0
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
-    burst_type = BurstContent.BURST_TRAFFIC_TYPE
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
 
@@ -554,12 +561,12 @@ class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
 
 
 class NormalDiscontDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
+    __slots__ = ()
     sn_max = 246
     start_guard_bit_period = 10
     end_guard_bit_period = 8
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
-    burst_type = BurstContent.BURST_TRAFFIC_TYPE
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
 
@@ -765,12 +772,12 @@ class SynchronousDownlinkMixin:
 
 
 class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
+    __slots__ = ()
     sn_max = 255
     start_guard_bit_period = 0
     end_guard_bit_period = 0
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
-    burst_type = BurstContent.BURST_CONTROL_TYPE
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
 
@@ -786,7 +793,7 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
         if input_logical_ch_bbk.channel != ChannelName.AACH_CHANNEL:
             raise ValueError(f"Passed broadcast block is invalid for {type(self).__name__} expected"
                              f" {ChannelName.AACH_CHANNEL}")
-
+        self.burst_type = BurstContent.BURST_CONTROL_TYPE
         bkn1 = input_logical_ch_sb.channel
         bkn2 = input_logical_ch_bkn2.channel
         _, multiple_logical_ch_state = self._validate_normal_downlink_mapping(bkn1, bkn2)
@@ -832,12 +839,12 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
 
 
 class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
+    __slots__ = ()
     sn_max = 246
     start_guard_bit_period = 10
     end_guard_bit_period = 8
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
-    burst_type = BurstContent.BURST_CONTROL_TYPE
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
 
@@ -853,7 +860,7 @@ class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
         if input_logical_ch_bbk.channel != ChannelName.AACH_CHANNEL:
             raise ValueError(f"Passed broadcast block is invalid for {type(self).__name__} expected"
                              f" {ChannelName.AACH_CHANNEL}")
-
+        self.burst_type = BurstContent.BURST_CONTROL_TYPE
         bkn1 = input_logical_ch_sb.channel
         bkn2 = input_logical_ch_bkn2.channel
 
@@ -904,16 +911,17 @@ class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
 
 
 class LinearizationUplinkBurst(Burst):
+    __slots__ = ()
     sn_max = 240
     start_guard_bit_period = 34    # not in the standard just chosen
     end_guard_bit_period = 15
     subslot_width = 1
     link_direction = LinkDirection.UPLINK
-    burst_type = BurstContent.BURST_LINEARIZATION_TYPE
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
 
     def construct_burst_sequence(self, input_logical_ch_ssn1: CLCH) -> NDArray[uint8]:
+        self.burst_type = BurstContent.BURST_LINEARIZATION_TYPE
         if self.phy_channel in (PhyType.TRAFFIC_CHANNEL, PhyType.CONTROL_CHANNEL):
             if self.frame_number != CONTROL_FRAME_NUMBER:
                 raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
@@ -947,16 +955,17 @@ class LinearizationUplinkBurst(Burst):
 
 
 class NullHalfslotUplinkBurst(Burst):
+    __slots__ = ()
     sn_max = 255
     start_guard_bit_period = 0
     end_guard_bit_period = 0
     subslot_width = 1
     link_direction = LinkDirection.UPLINK
-    burst_type = BurstContent.BURST_MIXED_TYPE
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
 
     def construct_burst_sequence(self) -> NDArray[uint8]:
+        self.burst_type = BurstContent.BURST_MIXED_TYPE
         return zeros(shape=self.sn_max, dtype=uint8)
 
     def deconstuct_burst_sequence(self) -> NDArray[uint8]:

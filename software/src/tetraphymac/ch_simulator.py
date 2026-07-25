@@ -16,7 +16,7 @@ from scipy.constants import c as C_SPEED_OF_LIGHT
 from .constants import TETRA_PROPAGATION_MODELS, TetraPropagationModels, PropagationTapParameters, \
                        TetraTapGainProcess, PropagationModelParameters, OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY, \
                        TETRA_DEFAULT_MODEL_VELOCITIES_KPH, TETRA_FADING_SIMULATION_RATE, StreamPosition
-from .transmitter import TRANSMIT_SIMULATION_SAMPLE_RATE
+from .constants import TETRA_TX_SIMULATION_SAMPLE_RATE
 
 
 ###################################################################################################
@@ -67,9 +67,9 @@ class StaticProcess(ComplexGainProcess):
         :type f_doppler: float
         """
         # Might handle variable simulation rates for the fading sim in the future but unlikely
-        if f_sim != TRANSMIT_SIMULATION_SAMPLE_RATE:
+        if f_sim != TETRA_TX_SIMULATION_SAMPLE_RATE:
             raise ValueError(f"Passed simulation sample rate: {f_sim} is not the expected"
-                             f" rate of {TRANSMIT_SIMULATION_SAMPLE_RATE}")
+                             f" rate of {TETRA_TX_SIMULATION_SAMPLE_RATE}")
         if isclose(f_doppler, 0):
             self.doppler_yes = False
             self.fd = 0.0
@@ -201,9 +201,9 @@ class RayleighProcess(ComplexGainProcess):
         self.wd = abs(f_doppler) * 2 * pi
         self.f_fade_sim = TETRA_FADING_SIMULATION_RATE
         # Might handle variable simulation rates for the fading sim in the future but unlikely
-        if f_sim != TRANSMIT_SIMULATION_SAMPLE_RATE:
+        if f_sim != TETRA_TX_SIMULATION_SAMPLE_RATE:
             raise ValueError(f"Passed simulation sample rate: {f_sim} is not the expected"
-                             f" rate of {TRANSMIT_SIMULATION_SAMPLE_RATE}")
+                             f" rate of {TETRA_TX_SIMULATION_SAMPLE_RATE}")
         self.total_upsample = 144
         self.stage_upsample = 12
 

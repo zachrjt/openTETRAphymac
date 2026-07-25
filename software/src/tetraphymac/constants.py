@@ -37,6 +37,7 @@ class BurstContent(str, Enum):
     BURST_CONTROL_TYPE = "control"
     BURST_MIXED_TYPE = "mixed"
     BURST_LINEARIZATION_TYPE = "linear"
+    BURST_UNKNOWN_TYPE = "unknown"
 
 
 class SlotLength(str, Enum):
@@ -135,6 +136,10 @@ TIMESLOT_SUBSLOT_LENGTH = 2         # How many subslots in a timeslot
 OPENTETRAPHYMAC_DEFAULT_TX_FREQUENCY = 905.025E6
 OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY = 918.025E6
 
+# Internal sw simulator sampling rate, allows for capture of harmonics
+TETRA_TX_SIMULATION_SAMPLE_RATE = int(TX_BB_SAMPLING_FACTOR * TETRA_SYMBOL_RATE * TRANSMIT_SIMULATION_SAMPLING_FACTOR)
+
+
 #############################################
 # Propagation Models
 
@@ -226,6 +231,5 @@ class StreamPosition(str, Enum):
     START_BURST = "START"
     MIDDLE_BURST = "MIDDLE"
     END_BURST = "END"
-
 
 #############################################
