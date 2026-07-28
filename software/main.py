@@ -146,7 +146,7 @@ def main():
     pkt_traffic_ch = tetraLch.TCH_4_8(n=4, seed_seq=log_ch_seed)
     pkt_traffic_ch.encode_type5_bits(pkt_traffic_ch.generate_rnd_input(4))
 
-    ul_tp_burst = tetraPhy.NormalUplinkBurst(ul_tp_rf_channel, 1, 1, 1)
+    ul_tp_burst = tetraPhy.NormalUplinkBurst(ul_tp_rf_channel)
     burst_modulation_bits = ul_tp_burst.construct_burst_sequence(pkt_traffic_ch)
 
     rx_real = tx_real.transmit_burst(burst_modulation_bits,
@@ -193,9 +193,9 @@ def main():
     # pkt_control_ch2.encode_type5_bits(pkt_control_ch1.generate_rnd_input(1))
 
 
-    # ul_cp_burst = tetraPhy.ControlUplink(ul_cp_rf_channel, 1, 1, 1)
+    # ul_cp_burst = tetraPhy.ControlUplink(ul_cp_rf_channel)
     # sch_hu_burst1 = ul_cp_burst.construct_burst_sequence(pkt_control_ch1)
-    # # ul_null_burst = tetraPhy.Null_Halfslot_Uplink_Burst(ul_cp_rf_channel, 1, 1, 1)
+    # # ul_null_burst = tetraPhy.Null_Halfslot_Uplink_Burst(ul_cp_rf_channel)
     # # sch_hu_burst2 = ul_null_burst.constructBurstBitSequence()
     # sch_hu_burst2 = ul_cp_burst.construct_burst_sequence(pkt_control_ch2)
 

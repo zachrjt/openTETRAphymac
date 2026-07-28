@@ -10,9 +10,9 @@ from numpy import zeros, full, uint32, argmin, uint8, array, arange, empty, broa
 from numpy.typing import NDArray
 
 # MNC, MCC, and Colour code are chosen at random here to feed the seed for the scrambler
-MCC = [1, 0, 1, 0, 1, 0, 1, 0, 0, 0]                # order is MSB -> LSB
-MNC = [1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0]    # order is MSB -> LSB
-COLOUR_CODE = [1, 0, 1, 0, 1, 0]                    # order is MSB -> LSB
+TETRA_MCC = [1, 0, 1, 0, 1, 0, 1, 0, 0, 0]                # order is MSB -> LSB
+TETRA_MNC = [1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0]    # order is MSB -> LSB
+TETRA_COLOUR_CODE = [1, 0, 1, 0, 1, 0]                    # order is MSB -> LSB
 
 N_BLOCK_BIT_LENGTH = 432
 N_BLOCK_BLOCK_INTERLEAVER_A_VALUE = 103
@@ -669,7 +669,7 @@ def scrambler(input_data: NDArray[uint8], bsch_state: bool = False) -> NDArray[u
     scrambler_init_code = []
 
     if not bsch_state:
-        scrambler_init_code = [1, 1] + MCC + MNC + COLOUR_CODE
+        scrambler_init_code = [1, 1] + TETRA_MCC + TETRA_MNC + TETRA_COLOUR_CODE
     else:
         # for BSCH with scramble with zeros
         scrambler_init_code = [1, 1] + [0]*30

@@ -3,10 +3,9 @@ modulation.py contains functions that peform modulation or demodulation of data 
 into binary modulation bits.
 """
 from typing import Literal
+
 from numpy import cumprod, complex64, pi, float64, uint8, mod, array, exp, dtype, ndarray, \
-    concatenate, full
-from numpy import sum as np_sum
-from numpy import abs as np_abs
+    concatenate, full, sum as np_sum, abs as np_abs
 from numpy.typing import NDArray
 
 # Pi/4 DQPSK LUT used to convert modulation bits into complex symbols

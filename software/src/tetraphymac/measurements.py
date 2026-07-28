@@ -4,13 +4,15 @@ reciever chains. It also contains functions to plot spectra and waveforms
 """
 from typing import Dict, Tuple
 import warnings
+
 from numpy import zeros, float64, isclose, cos, sin, pi, exp, arange, logspace, vdot, polyfit, floor, \
-                  mean, log10, pad, complex64, ceil, log2, fft, complex128, linspace, argsort, unwrap, angle
-from numpy import sum as np_sum, abs as np_abs
+                  mean, log10, pad, complex64, ceil, log2, fft, complex128, linspace, argsort, unwrap, angle, \
+                  sum as np_sum, abs as np_abs
 from numpy.typing import NDArray
 
 from scipy.signal import welch
 from scipy.signal import sosfilt as sp_sosfilt, lfilter as sp_lfilter
+
 import matplotlib.pyplot as plt
 
 from .constants import TETRA_SYMBOL_RATE

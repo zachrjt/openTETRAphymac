@@ -4,7 +4,8 @@ for bursts and exist at the upper PHY layer, their purpose is to take in control
 MAC and perform the appropriate CRC, interleaving, encoding, and interleaving on data before the resultant type 5 blocks
 are used in phyiscal channel bursts as uplink/downlink control, traffic, broadcast, or linearization blocks/subslots
 """
-from typing import Literal, ClassVar
+from abc import ABC, abstractmethod
+from typing import Literal, ClassVar, Self
 from numpy.random import SeedSequence, Generator, PCG64, randint
 from numpy import uint8, array, empty
 from numpy.typing import NDArray
@@ -19,7 +20,7 @@ LOGICAL_CH_TAIL_BITS = array([0, 0, 0, 0], uint8)  # The zero-valued tail bits a
 EMPTY_UINT8 = empty((0, 0), dtype=uint8)
 
 
-class LogicalChannelVD():
+class LogicalChannelVD(ABC):
     '''
     logical channels contain:
         1. a method to construct type-5 bits in type 5 blocks
@@ -59,6 +60,14 @@ class LogicalChannelVD():
     seed_seq: SeedSequence
     rng_gen: Generator
 
+    @property
+    def has_type_5_blocks(self):
+        return False if self.type_5_blocks.size == 0 else True
+
+    @property
+    def has_type_1_blocks(self):
+        return False if self.type_1_blocks.size == 0 else True
+
     def __init__(self, seed_seq: SeedSequence | None = None) -> None:
         self.type_1_blocks = EMPTY_UINT8
         self.type_2_blocks = EMPTY_UINT8
@@ -73,6 +82,13 @@ class LogicalChannelVD():
         else:
             self.seed_seq = seed_seq
         self.rng_gen = Generator(PCG64(self.seed_seq))
+
+    def get_type_5_block_view(self, i: int) -> Self:
+        view = type(self)(seed_seq=self.seed_seq)
+        view.m = 1
+        view.type_5_blocks = self.type_5_blocks[i:i+1]
+
+        return view
 
     def generate_rnd_input(self, m: int = 1) -> NDArray[uint8]:
         """
@@ -115,6 +131,22 @@ class LogicalChannelVD():
                 raise RuntimeError(f"For logical channel {self.__class__.__name__}"
                                    f", expected k1: {self.k1} output bits, recieved {self.type_1_blocks.shape}")
 
+    @abstractmethod
+    def encode_type5_bits(self, input_data_blocks: NDArray[uint8]) -> None:
+        """
+        Base abstract method that converts PDU bit data into logical channel blocks
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def decode_type5_bits(self, input_data_blocks: NDArray[uint8]) -> None:
+        """
+        Base abstract method that converts logical channel blocks into PDU data
+        """
+        raise NotImplementedError
+
+    def __str__(self) -> str:
+        return f"{self.channel}"
 ###################################################################################################
 
 

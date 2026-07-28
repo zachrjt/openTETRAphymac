@@ -4,6 +4,7 @@ reciever.
 """
 from typing import Tuple, Literal
 from abc import ABC, abstractmethod
+
 from numpy import round as np_round, zeros, float64, complex128, pi, arange, cos, sin, sum as np_sum, empty, int64, \
                   sqrt as np_sqrt, isclose, exp, full, concatenate, ceil, allclose as np_allclose, floor, \
                   linspace, any as np_any
@@ -14,7 +15,7 @@ from scipy.signal import remez as sp_remez, upfirdn as sp_upfirdn, lfilter
 from scipy.constants import c as C_SPEED_OF_LIGHT
 
 from .constants import TETRA_PROPAGATION_MODELS, TetraPropagationModels, PropagationTapParameters, \
-                       TetraTapGainProcess, PropagationModelParameters, OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY, \
+                       TetraTapGainProcess, PropagationModelParameters, \
                        TETRA_DEFAULT_MODEL_VELOCITIES_KPH, TETRA_FADING_SIMULATION_RATE, StreamPosition
 from .constants import TETRA_TX_SIMULATION_SAMPLE_RATE
 

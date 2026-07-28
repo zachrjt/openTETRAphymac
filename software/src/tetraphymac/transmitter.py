@@ -18,23 +18,26 @@ testing.
 """
 from abc import ABC, abstractmethod
 from typing import Literal
+
 from numpy import complex64, float64, uint8, zeros, \
-    int64, concatenate, full, zeros_like, repeat, sin, cos, complex128, pad
+     int64, concatenate, full, zeros_like, repeat, sin, cos, complex128, pad
 from numpy.random import Generator, PCG64, SeedSequence
 from numpy.typing import NDArray
+
 from scipy.signal import bessel, sosfilt, sosfilt_zi
 
 from .tx_rx_utilities import power_ramping_float, \
     power_ramping_quantized, assert_tail_is_zero, oversample_data_quantized, oversample_data_float, \
-    TX_HALFBAND1_FLOAT_COEFFICIENTS, TX_HALFBAND1_Q17_COEFFICIENTS, TX_HALFBAND2_FLOAT_COEFFICIENTS, \
-    TX_HALFBAND2_Q17_COEFFICIENTS, TX_HALFBAND3_FLOAT_COEFFICIENTS, TX_HALFBAND3_Q17_COEFFICIENTS, \
-    TX_LPF_FLOAT_COEFFICIENTS, TX_LPF_Q17_COEFFICIENTS, TX_RRC_FLOAT_COEFFICIENTS, TX_RRC_Q17_COEFFICIENTS, \
     dsp_fir_i_q_stream_convolve, OPENTETRAPHYMAC_HW_DAC_BIT_NUMBER, q17_rounding, NUMBER_OF_FRACTIONAL_BITS, \
     OPENTETRAPHYMAC_TX_HW_SSB_MASK
 
 
 from .constants import SUBSLOT_BIT_LENGTH, TX_BB_SAMPLING_FACTOR, TRANSMIT_SIMULATION_SAMPLING_FACTOR, \
-                       TETRA_TX_SIMULATION_SAMPLE_RATE
+                       TETRA_TX_SIMULATION_SAMPLE_RATE, TX_HALFBAND1_FLOAT_COEFFICIENTS, \
+                       TX_HALFBAND1_Q17_COEFFICIENTS, TX_HALFBAND2_FLOAT_COEFFICIENTS, \
+                       TX_HALFBAND2_Q17_COEFFICIENTS, TX_HALFBAND3_FLOAT_COEFFICIENTS, \
+                       TX_HALFBAND3_Q17_COEFFICIENTS, TX_LPF_FLOAT_COEFFICIENTS, TX_LPF_Q17_COEFFICIENTS, \
+                       TX_RRC_FLOAT_COEFFICIENTS, TX_RRC_Q17_COEFFICIENTS
 from .modulation import dqpsk_modulator
 from .impairments import PhaseNoiseSimulator
 
