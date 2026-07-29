@@ -69,6 +69,17 @@ class BurstContinuity(str, Enum):
     # this applies only to NormalDownlinkBurst
     OPTIONAL = "optional"
 
+
+class VDBurstTypes(str, Enum):
+    """
+    Enum class used to describe burst classes in how the TETRA standard designates them
+    """
+    NORMAL_UPLINK_BURST = "NUB"
+    LINEARIZATION_BURST = "LB"
+    CONTROL_UPLINK_BURST = "CB"
+    SYNCHRONIZATION_DOWNLINK_BURST = "SB"
+    NORMAL_DOWNLINK_BURST = "NDB"
+
 #############################################
 # LOGICAL CHANNEL CONSTANTS
 
@@ -253,6 +264,16 @@ class StreamPosition(str, Enum):
     MIDDLE_BURST = "MIDDLE"
     END_BURST = "END"
 
+
+TETRA_RAMP_BOOLS_FROM_STREAM_POSITION = {StreamPosition.ISOLATED_BURST: (True, True),
+                                         StreamPosition.START_BURST: (True, False),
+                                         StreamPosition.MIDDLE_BURST: (False, False),
+                                         StreamPosition.END_BURST: (False, True)}
+
+TETRA_STREAM_POSITION_FROM_RAMP_BOOLS = {(True, True): StreamPosition.ISOLATED_BURST,
+                                         (True, False): StreamPosition.START_BURST,
+                                         (False, False): StreamPosition.MIDDLE_BURST,
+                                         (False, True): StreamPosition.END_BURST}
 
 #############################################
 # TETRA Baseband Processing Filter Constants

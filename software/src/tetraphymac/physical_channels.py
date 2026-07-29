@@ -24,7 +24,7 @@ from numpy.typing import NDArray
 from .constants import CONTROL_FRAME_NUMBER, HYPERFRAME_MULTIFRAME_LENGTH, MULTIFRAME_TDMAFRAME_LENGTH, \
     TDMAFRAME_TIMESLOT_LENGTH, TIMESLOT_BIT_LENGTH, TIMESLOT_SUBSLOT_LENGTH, PhyType, LinkDirection, BurstContent, \
     ChannelKind, ChannelName, OPENTETRAPHYMAC_DEFAULT_TX_FREQUENCY, OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY, \
-    BurstContinuity
+    BurstContinuity, VDBurstTypes
 from .logical_channels import BLCH, BNCH, BSCH, CLCH, SCH_HD, SCH_F, SCH_HU, AACH, LogicalChannelVD, \
     TrafficChannel, STCH
 from .modulation import calculate_phase_adjustment_bits
@@ -194,6 +194,11 @@ class TDMATime:
             return NotImplemented
         return self.absolute_counter < other.absolute_counter
 
+    def __repr__(self) -> str:
+        r_str = f"HN:{self.hyperframe}, MN:{self.multiframe}, FN:{self.frame}, TN:{self.timeslot}"
+        r_str += f", SSN: {self.subslot}, ABS: {self.absolute_counter}"
+        return r_str
+
 
 @dataclass(frozen=True, slots=True)
 class RFCarrier:
@@ -202,6 +207,16 @@ class RFCarrier:
 
     ul_frequency: float  # The UL frequency for MS->BS tx
     dl_frequency: float  # The DL frequency for BS->MS tx
+
+    @property
+    def id(self):
+        return self.channel_number
+
+    def __repr__(self) -> str:
+        r_str = f"RF Carrier: {self.channel_number},"
+        r_str += f" main carrier?={self.main_carrier}"
+        r_str += f"UL Freq.: {self.ul_frequency/1E6:.3f} MHz, DL Freq.: {self.dl_frequency/1E6:.3f}"
+        return r_str
 
 
 @dataclass(slots=True)
@@ -224,9 +239,10 @@ class PhysicalChannel:
         self.allowed_timeslots = allowed_timeslots
 
     def __repr__(self) -> str:
-        r_str = f"RF Carrier: {self.carrier.channel_number}, type: {self.channel_type},"
+        r_str = f"Physical Channel: {self.carrier.channel_number}, type: {self.channel_type},"
         r_str += f" main carrier?={self.carrier.main_carrier}"
         r_str += f"UL Freq.: {self.carrier.ul_frequency/1E6:.3f} MHz, DL Freq.: {self.carrier.dl_frequency/1E6:.3f}"
+        r_str += f", Allowed timeslots: {self.allowed_timeslots}"
         r_str = textwrap.fill(r_str)
         return r_str
 
@@ -249,8 +265,12 @@ class Burst():
     end_guard_bit_period: ClassVar[int]       # The end guard period in bits (default)
     subslot_width: ClassVar[int]                # How many subslots does the burst take up: 1 or 2
     link_direction: ClassVar[LinkDirection]     # either DL or UL
+
     ALLOWED_PHY: ClassVar[set[PhyType]]         # Permissible physical channel types for the burst class
+    DEFAULT_PHY: ClassVar[PhyType]              # Just a default phy, allows for default behaviour in BurstStreamBuilder
     CONTINUITY_MODE: ClassVar[BurstContinuity]
+    CONTINUITY_COMPATIBLE_BURST_TYPES: ClassVar[set[VDBurstTypes]]
+    CONTINUITY_BURST_TYPE: ClassVar[VDBurstTypes]
 
     # instance variables
     burst_type: BurstContent        # either traffic, control, or mixed
@@ -296,6 +316,21 @@ class Burst():
         if self.phy_channel not in self.ALLOWED_PHY:
             raise ValueError(f"Phy {self.phy_channel} invalid for {type(self).__name__}")
 
+        if self.CONTINUITY_MODE == BurstContinuity.OPTIONAL or self.CONTINUITY_MODE == BurstContinuity.REQUIRED:
+            if len(self.CONTINUITY_COMPATIBLE_BURST_TYPES) == 0:
+                raise ValueError(f"Burst CONTINUITY_MODE is: {self.CONTINUITY_MODE},"
+                                 " expected CONTINUITY_COMPATIBLE_BURST_TYPES set to contain atleast 1 type but found"
+                                 f" set with length: {len(self.CONTINUITY_COMPATIBLE_BURST_TYPES)}")
+        elif self.CONTINUITY_MODE == BurstContinuity.ISOLATED:
+            if len(self.CONTINUITY_COMPATIBLE_BURST_TYPES) != 0:
+                raise ValueError(f"Burst CONTINUITY_MODE is: {self.CONTINUITY_MODE},"
+                                 " expected CONTINUITY_COMPATIBLE_BURST_TYPES set to be empty but found"
+                                 f" set with length: {len(self.CONTINUITY_COMPATIBLE_BURST_TYPES)}")
+
+        if self.DEFAULT_PHY not in self.ALLOWED_PHY:
+            raise ValueError(f"Burst DEFAULT_PHY was set to: {self.DEFAULT_PHY}, but this type is not found in:"
+                             f" ALLOWED_PHY set of: {self.ALLOWED_PHY}")
+
     def _validate_class_constants(self) -> None:
         required_vars = ["sn_max", "start_guard_bit_period", "end_guard_bit_period",
                          "subslot_width", "link_direction", "ALLOWED_PHY"]
@@ -315,9 +350,12 @@ class ControlUplink(Burst):
     link_direction = LinkDirection.UPLINK
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL}
+    DEFAULT_PHY = PhyType.CONTROL_CHANNEL
     CONTINUITY_MODE = BurstContinuity.ISOLATED
+    CONTINUITY_COMPATIBLE_BURST_TYPES = set()
+    CONTINUITY_BURST_TYPE = VDBurstTypes.CONTROL_UPLINK_BURST
 
-    def construct_burst_sequence(self, input_logical_ch_ssn1: SCH_HU) -> NDArray[uint8]:
+    def construct_burst_sequence(self, input_logical_ch_ssn1: SCH_HU | LogicalChannelVD) -> NDArray[uint8]:
         self.burst_type = BurstContent.BURST_CONTROL_TYPE
         # Must verify specific non-common TN/FN based on physical channel
         if self.phy_channel == PhyType.CONTROL_CHANNEL:
@@ -360,10 +398,13 @@ class NormalUplinkBurst(Burst):
     link_direction = LinkDirection.UPLINK
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL}
+    DEFAULT_PHY = PhyType.TRAFFIC_CHANNEL
     CONTINUITY_MODE = BurstContinuity.OPTIONAL
+    CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.NORMAL_UPLINK_BURST}
+    CONTINUITY_BURST_TYPE = VDBurstTypes.NORMAL_UPLINK_BURST
 
-    def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH,
-                                 input_logical_ch_bkn2: TrafficChannel | STCH | None = None,
+    def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH | LogicalChannelVD,
+                                 input_logical_ch_bkn2: TrafficChannel | STCH | LogicalChannelVD | None = None,
                                  ramp_up_down_state: tuple[bool, bool] = (True, True)) -> NDArray[uint8]:
 
         bkn1 = input_logical_ch_bkn1.channel_type
@@ -660,13 +701,18 @@ class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
     link_direction = LinkDirection.DOWNLINK
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhyType.TRAFFIC_CHANNEL
     CONTINUITY_MODE = BurstContinuity.REQUIRED
+    CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.NORMAL_DOWNLINK_BURST,
+                                         VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST}
+    CONTINUITY_BURST_TYPE = VDBurstTypes.NORMAL_DOWNLINK_BURST
 
     phy_channel: PhyType
 
-    def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH | SCH_HD,
-                                 input_logical_ch_bbk: AACH,
-                                 input_logical_ch_bkn2: TrafficChannel | BLCH | BNCH | STCH | SCH_HD | None = None,
+    def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH | SCH_HD | LogicalChannelVD,
+                                 input_logical_ch_bbk: AACH | LogicalChannelVD,
+                                 input_logical_ch_bkn2: TrafficChannel | BLCH | BNCH
+                                 | STCH | SCH_HD | LogicalChannelVD | None = None,
                                  ramp_up_down_state: tuple[bool, bool] = (False, False)) -> NDArray[uint8]:
         # If bkn1 is control, we care about the specific channel type, if it is traffic we dont care for bkn1
         bkn1 = self._norm_bkin(input_logical_ch_bkn1)
@@ -732,13 +778,17 @@ class NormalDiscontDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
     link_direction = LinkDirection.DOWNLINK
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhyType.TRAFFIC_CHANNEL
     CONTINUITY_MODE = BurstContinuity.ISOLATED
+    CONTINUITY_COMPATIBLE_BURST_TYPES = set()
+    CONTINUITY_BURST_TYPE = VDBurstTypes.NORMAL_DOWNLINK_BURST
 
     phy_channel: PhyType
 
-    def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH | SCH_HD,
-                                 input_logical_ch_bbk: AACH,
-                                 input_logical_ch_bkn2: TrafficChannel | BLCH | BNCH | STCH | SCH_HD | None = None,
+    def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH | SCH_HD | LogicalChannelVD,
+                                 input_logical_ch_bbk: AACH | LogicalChannelVD,
+                                 input_logical_ch_bkn2: TrafficChannel | BLCH | BNCH
+                                 | STCH | SCH_HD | LogicalChannelVD | None = None,
                                  ramp_up_down_state: tuple[bool, bool] = (True, True)) -> NDArray[uint8]:
         # If bkn1 is control, we care about the specific channel type, if it is traffic we dont care for bkn1
         bkn1 = self._norm_bkin(input_logical_ch_bkn1)
@@ -941,13 +991,17 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
     link_direction = LinkDirection.DOWNLINK
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhyType.CONTROL_CHANNEL
     CONTINUITY_MODE = BurstContinuity.REQUIRED
+    CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.NORMAL_DOWNLINK_BURST,
+                                         VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST}
+    CONTINUITY_BURST_TYPE = VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST
 
     phy_channel: PhyType
 
-    def construct_burst_sequence(self, input_logical_ch_sb: BSCH | SCH_HD,
-                                 input_logical_ch_bbk: AACH,
-                                 input_logical_ch_bkn2: BNCH | BLCH | SCH_HD,
+    def construct_burst_sequence(self, input_logical_ch_sb: BSCH | SCH_HD | LogicalChannelVD,
+                                 input_logical_ch_bbk: AACH | LogicalChannelVD,
+                                 input_logical_ch_bkn2: BNCH | BLCH | SCH_HD | LogicalChannelVD,
                                  ramp_up_down_state: tuple[bool, bool] = (False, False)) -> NDArray[uint8]:
         if input_logical_ch_bbk.channel != ChannelName.AACH_CHANNEL:
             raise ValueError(f"Passed broadcast block is invalid for {type(self).__name__} expected"
@@ -1006,13 +1060,16 @@ class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
     link_direction = LinkDirection.DOWNLINK
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhyType.CONTROL_CHANNEL
     CONTINUITY_MODE = BurstContinuity.ISOLATED
+    CONTINUITY_COMPATIBLE_BURST_TYPES = set()
+    CONTINUITY_BURST_TYPE = VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST
 
     phy_channel: PhyType
 
-    def construct_burst_sequence(self, input_logical_ch_sb: BSCH | SCH_HD,
-                                 input_logical_ch_bbk: AACH,
-                                 input_logical_ch_bkn2: BNCH | BLCH | SCH_HD,
+    def construct_burst_sequence(self, input_logical_ch_sb: BSCH | SCH_HD | LogicalChannelVD,
+                                 input_logical_ch_bbk: AACH | LogicalChannelVD,
+                                 input_logical_ch_bkn2: BNCH | BLCH | SCH_HD | LogicalChannelVD,
                                  ramp_up_down_state: tuple[bool, bool] = (True, True)) -> NDArray[uint8]:
         if input_logical_ch_bbk.channel != ChannelName.AACH_CHANNEL:
             raise ValueError(f"Passed broadcast block is invalid for {type(self).__name__} expected"
@@ -1076,9 +1133,12 @@ class LinearizationUplinkBurst(Burst):
     link_direction = LinkDirection.UPLINK
 
     ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhyType.TRAFFIC_CHANNEL
     CONTINUITY_MODE = BurstContinuity.ISOLATED
+    CONTINUITY_COMPATIBLE_BURST_TYPES = set()
+    CONTINUITY_BURST_TYPE = VDBurstTypes.LINEARIZATION_BURST
 
-    def construct_burst_sequence(self, input_logical_ch_ssn1: CLCH) -> NDArray[uint8]:
+    def construct_burst_sequence(self, input_logical_ch_ssn1: CLCH | LogicalChannelVD) -> NDArray[uint8]:
         self.burst_type = BurstContent.BURST_LINEARIZATION_TYPE
         if self.phy_channel in (PhyType.TRAFFIC_CHANNEL, PhyType.CONTROL_CHANNEL):
             if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
@@ -1108,26 +1168,5 @@ class LinearizationUplinkBurst(Burst):
 
     def deconstuct_burst_sequence(self) -> None:
         raise NotImplementedError
-
-###################################################################################################
-
-
-class NullHalfslotUplinkBurst(Burst):
-    __slots__ = ()
-    sn_max = 255
-    start_guard_bit_period = 0
-    end_guard_bit_period = 0
-    subslot_width = 1
-    link_direction = LinkDirection.UPLINK
-
-    ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
-    CONTINUITY_MODE = BurstContinuity.ISOLATED
-
-    def construct_burst_sequence(self) -> NDArray[uint8]:
-        self.burst_type = BurstContent.BURST_MIXED_TYPE
-        return zeros(shape=self.sn_max, dtype=uint8)
-
-    def deconstuct_burst_sequence(self) -> NDArray[uint8]:
-        return zeros(shape=self.sn_max, dtype=uint8)
 
 ###################################################################################################
