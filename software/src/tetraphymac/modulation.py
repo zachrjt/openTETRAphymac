@@ -17,15 +17,15 @@ def calculate_phase_adjustment_bits(input_data: NDArray[uint8],
                                     inclusive_indices: tuple[int, int],
                                     guard_start_offset: int = 0) -> ndarray[tuple[Literal[2]], dtype[uint8]]:
     """
-    Modulates input data within the inclusiveIndices accounting for a guardoffset, to determine the total
+    Modulates input data within`inclusive_indices` accounting for a guardoffset, to determine the total
     cummulative phase and returns the correct bit pair that would set the cumulative phase to zero
 
     :param input_data: Binary 1's and 0's input to evaluate total Pi/4-dqpsk phase angle over
     :type input_data: NDArray[uint8]
-    :param inclusiveIndices: The start and stop indices (inclusive) to evaluate the cumulative phase
-    :type inclusiveIndices: tuple[int, int]
-    :param guardOffset: An offset to account for an initial guard period in input data, offsets inclusive indices
-    :type guardOffset: int
+    :param inclusive_indices: The start and stop indices (inclusive) to evaluate the cumulative phase
+    :type inclusive_indices: tuple[int, int]
+    :param guard_start_offset: An offset to account for an initial guard period in input data, offsets inclusive indices
+    :type guard_start_offset: int
     :return: Returns two bits that if added into the cumulative phase results in the cumulative phase being zero
     :rtype: NDArray[uint8]
     """

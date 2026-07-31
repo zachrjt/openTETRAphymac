@@ -1,11 +1,11 @@
 """
-physical_channels.py contains the implementations for each type of valid uplink and downlink burst for TETRA V2.4.2.
+physical_channels.py contains the implementations for each type of valid uplink and downlink burst for TETRA V1.0 2.4.2.
 each burst has in-depth validation methods to ensure only permissible bursts are being constructed based on subslot,
 slot, frame, multiframe numbers and physical channels.
 
 Each burst contains a construct_burst_sequence method which takes in 1-3 logical channels, depedant on the type of burst
 , validates that the input logical channels are valid and a burst can be built with the passed Physical Channel object
-during initilization and the current subslot, slot, frame, multiframe numbers.
+during initilization and the current `TDMATime` in terms of timeslot, frame, multiframe
 
 It then constructs the 510 modulation bits for the burst using the logical channel data and training sequences,
 phase adjustment bits, etc.
@@ -13,18 +13,17 @@ phase adjustment bits, etc.
 The returned modulation bits are ready to be fed into a RFTransmitter class alongside the start_ramp_period and
 end_ramp_periods.
 """
-import textwrap
 from typing import ClassVar, Protocol, Self
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import total_ordering
 
 from numpy import uint8, array, empty, zeros
 from numpy.typing import NDArray
 
 from .constants import CONTROL_FRAME_NUMBER, HYPERFRAME_MULTIFRAME_LENGTH, MULTIFRAME_TDMAFRAME_LENGTH, \
-    TDMAFRAME_TIMESLOT_LENGTH, TIMESLOT_BIT_LENGTH, TIMESLOT_SUBSLOT_LENGTH, PhyType, LinkDirection, BurstContent, \
-    ChannelKind, ChannelName, OPENTETRAPHYMAC_DEFAULT_TX_FREQUENCY, OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY, \
-    BurstContinuity, VDBurstTypes
+    TDMAFRAME_TIMESLOT_LENGTH, TIMESLOT_BIT_LENGTH, TIMESLOT_SUBSLOT_LENGTH, PhysicalChannelType, LinkDirection, \
+    BurstContent, ChannelKind, ChannelName, OPENTETRAPHYMAC_DEFAULT_UL_FREQUENCY, \
+    OPENTETRAPHYMAC_DEFAULT_DL_FREQUENCY, BurstContinuity, VDBurstTypes
 from .logical_channels import BLCH, BNCH, BSCH, CLCH, SCH_HD, SCH_F, SCH_HU, AACH, LogicalChannelVD, \
     TrafficChannel, STCH
 from .modulation import calculate_phase_adjustment_bits
@@ -61,11 +60,52 @@ PHASE_ADJUSTMENT_SYMBOL_RANGE = {"a": (7, 121), "b": (122, 248), "c": (7, 107), 
 @dataclass(slots=True)
 @total_ordering
 class TDMATime:
+    '''
+    `TDMATime` is a time implementation for openTETRAphymac that makes keeping track of time easier for display and
+    record keeping purposes. `TDMATime` is based around the time structure that TETRA 1.0 uses which is as follows:
+
+    1. **Hyperframe**: Contains 60 multiframes, = 61.2 s
+    2. **Multiframe**: Contains 18 TDMA frames, = 1.02 s
+    3. **(TDMA) Frame**: Contains 4 timeslots, = 56.67 ms
+    4. **Timeslot**: Contains 2 subslots, = 14.167 ms
+    5. **Subslot**: The smallest duration of a possible TETRA burst, 7.08ms
+
+    A TDMATime object is a discrete time, it does not have the ability to specify a duration, for bursts, a duration
+    is specified typically by a `start_time` and an `end_time` which may be a property instead equal to `start_time` +
+    `subslot_width`
+
+    Internally TDMATime uses an `absolute_counter` that increments based on subslots, it also include logical and
+    plus-minus operations dunder (double-under score) overiding, allow for easy use of TDMATime objects for comparision
+    and sorting as well as calculations.
+    '''
     absolute_counter: int = 1
 
     def __init__(self, hyperframe: int = 1, multiframe: int = 1,
-                 frame: int = 1, timeslot: int = 1, subslot: int = 1,
+                 frame: int = 1, timeslot: int = 1, subslot: int = 1, *,
                  absolute_counter: int | None = None):
+        """
+        Initilizes a `TDMATime` object either by specifying an `absolute_counter` from another TDMATime object,
+        or by manually specifying the Hyperframe, multiframe, frame, timeslot, and subslot numbers.
+
+        NOTE: Do not specify both `absolute_counter` and the various other TDMA counters, either or.
+
+        :param hyperframe: Hyperframe number of resulting TDMATime object
+        :type hyperframe: int, range: >= 1, default 1
+        :param multiframe: Multiframe number of resulting TDMATime object
+        :type multiframe: int, range: [1, 60], default 1
+        :param frame: Frame number of resulting TDMATime object
+        :type frame: int, range: [1, 18], default 1
+        :param timeslot: Timeslot number of resulting TDMATime object
+        :type timeslot: int, range: [1, 4], default 1
+        :param subslot: Subslot number of resulting TDMATime object
+        :type subslot: int, range: [1, 2], default 1
+        :param absolute_counter: `absolute_counter` value of resulting TDMATime object, **NOTE:** caller should either
+         specify values for the TDMA counters and leave `absolute_counter` as None, or specify `absolute_counter` and
+         leave counters as default/unspecified, can use another TDMATime object's `absolute_counter` for ease of init
+        :type absolute_counter: int | None, int range >= 0, default None
+        :return: TDMATime object initialized to the time value specified.
+        :rtype: TDMATime
+        """
         if absolute_counter is not None and (hyperframe != 1 or
                                              multiframe != 1 or
                                              frame != 1 or
@@ -80,6 +120,12 @@ class TDMATime:
 
     @staticmethod
     def _derive_absolute_counter(hn: int, mn: int, fn: int, tn: int, ssn: int) -> int:
+        """
+        Static method used to derive the `absolute_counter` value from the various TDMA counter int values
+
+        :return: `absolute_counter` value for use in a `TDMATime` object
+        :rtype: int
+        """
         hn = max(hn, 1)
         mn = mn if mn in range(1, HYPERFRAME_MULTIFRAME_LENGTH+1) else 1
         fn = fn if fn in range(1, MULTIFRAME_TDMAFRAME_LENGTH+1) else 1
@@ -97,6 +143,10 @@ class TDMATime:
 
     @property
     def hyperframe(self) -> int:
+        """
+        Calculates and returns the value of the hyperframe for a TDMATime object based on the internal
+        `absolute_counter` value.
+        """
         return self.absolute_counter // (HYPERFRAME_MULTIFRAME_LENGTH *
                                          MULTIFRAME_TDMAFRAME_LENGTH *
                                          TDMAFRAME_TIMESLOT_LENGTH *
@@ -104,46 +154,80 @@ class TDMATime:
 
     @property
     def multiframe(self) -> int:
+        """
+        Calculates and returns the value of the multiframe for a TDMATime object based on the internal
+        `absolute_counter` value.
+        """
         return self.absolute_counter // (MULTIFRAME_TDMAFRAME_LENGTH *
                                          TDMAFRAME_TIMESLOT_LENGTH *
                                          TIMESLOT_SUBSLOT_LENGTH) % HYPERFRAME_MULTIFRAME_LENGTH + 1
 
     @property
     def frame(self) -> int:
+        """
+        Calculates and returns the value of the frame for a TDMATime object based on the internal
+        `absolute_counter` value.
+        """
         return self.absolute_counter // (TDMAFRAME_TIMESLOT_LENGTH *
                                          TIMESLOT_SUBSLOT_LENGTH) % MULTIFRAME_TDMAFRAME_LENGTH + 1
 
     @property
     def timeslot(self) -> int:
+        """
+        Calculates and returns the value of the timeslot for a TDMATime object based on the internal
+        `absolute_counter` value.
+        """
         return self.absolute_counter // (TIMESLOT_SUBSLOT_LENGTH) % TDMAFRAME_TIMESLOT_LENGTH + 1
 
     @property
     def subslot(self) -> int:
+        """
+        Calculates and returns the value of the subslot for a TDMATime object based on the internal
+        `absolute_counter` value.
+        """
         return self.absolute_counter % TIMESLOT_SUBSLOT_LENGTH + 1
 
-    def advance_subslots(self, n: int = 1):
-        self.absolute_counter += n
+    def advance_subslots(self, subslots: int = 1):
+        """
+        Advances the TDMATime object by `subslots` number of subslots
+        """
+        self.absolute_counter += subslots
 
     def advance_to_next_timeslot(self):
+        """
+        Advances the TDMATime object to the next timeslot
+        """
         self.absolute_counter += TIMESLOT_SUBSLOT_LENGTH - (self.absolute_counter % TIMESLOT_SUBSLOT_LENGTH)
 
-    def distance(self, other: Self) -> int:
-        return other.absolute_counter - self.absolute_counter
-
     def is_same_hyperframe(self, other: Self) -> bool:
+        """
+        Returns True if current TDMATime object and `other` one are within the same hyperframe, else False
+        """
         return other.hyperframe == self.hyperframe
 
     def is_same_multiframe(self, other: Self) -> bool:
-        return (other.multiframe == self.multiframe and self.is_same_hyperframe(other))
+        """
+        Returns True if current TDMATime object and `other` one are within the same multiframe, else False
+        """
+        return other.multiframe == self.multiframe and self.is_same_hyperframe(other)
 
     def is_same_frame(self, other: Self) -> bool:
-        return (other.frame == self.frame and self.is_same_multiframe(other))
+        """
+        Returns True if current TDMATime object and `other` one are within the same frame, else False
+        """
+        return other.frame == self.frame and self.is_same_multiframe(other)
 
     def is_same_timeslot(self, other: Self) -> bool:
-        return abs(self.distance(other)) <= 1
+        """
+        Returns True if current TDMATime object and `other` one are within the same timeslot, else False
+        """
+        return self.timeslot == other.timeslot and self.is_same_frame(other)
 
-    def is_subsequent_timeslot(self, other: Self) -> bool:
-        return self.distance(other) == TIMESLOT_SUBSLOT_LENGTH
+    def is_adjacent_timeslot(self, other: Self) -> bool:
+        """
+        Returns True if current TDMATime object and `other` one are adjacent/bordering timeslots, else False
+        """
+        return self.is_same_frame(other) and abs(other.timeslot - self.timeslot) == 1
 
     def copy(self) -> Self:
         return type(self)(absolute_counter=self.absolute_counter)
@@ -195,21 +279,38 @@ class TDMATime:
         return self.absolute_counter < other.absolute_counter
 
     def __repr__(self) -> str:
-        r_str = f"HN:{self.hyperframe}, MN:{self.multiframe}, FN:{self.frame}, TN:{self.timeslot}"
-        r_str += f", SSN: {self.subslot}, ABS: {self.absolute_counter}"
+        r_str = f"HN-MN-FN:TN.SSN : {self.hyperframe:03d}-{self.multiframe:02d}"
+        r_str += f"-{self.frame:02d}:{self.timeslot:01d}.{self.subslot:01d}"
         return r_str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, order=True)
 class RFCarrier:
-    channel_number: int  # The channel number
-    main_carrier: bool   # If the carrier used is considered the "mainCarrier"
+    '''
+    `RFCarrier` is a physical channel atribute class that keeps track of transmitted RF channels. In TETRA V1.0,
+    a RF channel is a pair of unique Uplink and Downlink frequencies, with a some duplex spacing, usally in terms of
+    10's of MHz. With channel spacing compared to other RFCarriers in integers of 25 KHz channel spacing.
 
-    ul_frequency: float  # The UL frequency for MS->BS tx
-    dl_frequency: float  # The DL frequency for BS->MS tx
+    `RFCarrier` has the following values:
+
+    - `channel_number`: An unique int that is assigned to every RF Channel (pair of uplink and downlink frequencies)
+    - `main_carrier`: A bool that designates wether a RFCarrier is a main carrier for a BS
+        - A main carrier is the RF carrier in which a BS uses as the fundamental general access control carrier
+         and is designated MCCH (Main Control CHannel) and allows for unique, more frequent control signalling on it
+    - `ul_frequency`: A unique float value that designates the uplink (MS->BS) frequency of the RF channel
+    - `dl_frequency`: A unique float value that designates the downlink (BS->MS) frequency of the RF channel
+    '''
+    channel_number: int  # The channel number
+    main_carrier: bool = field(compare=False)  # If the carrier used is considered the "mainCarrier"
+
+    ul_frequency: float = field(compare=False)  # The UL frequency for MS->BS tx
+    dl_frequency: float = field(compare=False)  # The DL frequency for BS->MS tx
 
     @property
-    def id(self):
+    def id(self) -> int:
+        """
+        Currently returns the `channel_number` int value used to lookup RFCarriers
+        """
         return self.channel_number
 
     def __repr__(self) -> str:
@@ -221,16 +322,63 @@ class RFCarrier:
 
 @dataclass(slots=True)
 class PhysicalChannel:
-    channel_type: PhyType        # The type of physical channel (CP,TP,UP)
+    '''
+    `PhysicalChannel` is a modified implementation of a Physical Channel that TETRA V1.0 defines, which is an RF carrier
+    , channel type, and a timeslot.
+
+    Unlike the TETRA standard definition, a single timeslot is not specified in an `PhysicalChannel`
+    , instead a tuple of allowed timeslots is used, while an actual burst timeslots in the form of `TDMATime`
+    objects are used in parallel to keep timekeeping centralized in one dataclass.
+
+    **Note**:
+    - For use within the TETRA standard, a PhysicalChannel refers to a 1 RFCarrier + timeslot + channel type.
+    - In operation however, multi subsequent timeslots can be allocated if the MS supported it,
+     see multi-slot transmission in stnd., to simplify this and prevent keeping track of numerous channels,
+     openTETRAphymac simplifies this down to a `PhysicalChannel` object being able to represent:
+        - 1 RFCarrier, 1 channel type (traffic, control, unassigned), and up to 4 permitted timeslots
+    - This greatly reduces the number of channels to keep track of, now the user and MAC scheduler implementations
+     can focus more on keeping track of RF carriers, the physical channel type, and the scheduling rules and less
+     on duplicating `PhysicalChannel` instances
+
+    `PhysicalChannel` has the following values:
+
+    - `channel_type`: The type of physical channel, either `TRAFFIC_CHANNEL`, `CONTROL_CHANNEL`, or `UNASGN_CHANNEL`
+    - `carrier`: An `RFCarrier` object that defines the RF parameters of the physical channel
+    - `allowed_timeslots`: A tuple of int timeslot values that the `PhysicalChannel` object is permitted to be assigned
+     on for the specified `channel_type`
+
+    '''
+    channel_type: PhysicalChannelType  # The type of physical channel (CP,TP,UP)
     carrier: RFCarrier
     allowed_timeslots: tuple[int, ...]
 
-    def __init__(self, channel_type: PhyType,
+    def __init__(self, channel_type: PhysicalChannelType,
                  channel_number: int = 1, main_carrier: bool = False,
-                 ul_frequency: float = OPENTETRAPHYMAC_DEFAULT_TX_FREQUENCY,
-                 dl_frequency: float = OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY,
+                 ul_frequency: float = OPENTETRAPHYMAC_DEFAULT_UL_FREQUENCY,
+                 dl_frequency: float = OPENTETRAPHYMAC_DEFAULT_DL_FREQUENCY,
                  carrier: RFCarrier | None = None,
                  allowed_timeslots: tuple[int, ...] = (1, 2, 3, 4)):
+        """
+        Initilizes a `PhysicalChannel` object, specify the `channel_typ` and `allowed_timeslots` for the channel
+        and then either pass a premade `RFCarrier` object via `carrier` or specify the construction of one.
+        Refer to the note below for more details on `RFCarrier` specification
+
+        **NOTE:** Either pass a premade `RFCarrier` object via `carrier` or specifiy
+        `channel_number`, `main_carrier`, `ul_frequency` and `dl_frequency` to construct one internally.
+
+        :param channel_type: The TETRA channel type, either traffic, control, or unassigned.
+        :type channel_type: `PhysicalChannelType`, PhysicalChannelType.TRAFFIC_CHANNEL,
+         PhysicalChannelType.UNASGN_CHANNEL, PhysicalChannelType.CONTROL_CHANNEL
+        :param channel_number: The channel number of the `RFCarrier` that will be constructed internally
+        :type channel_number: int, default = 1
+        :param ul_frequency: The uplink (MS->BS) frequency of the `RFCarrier` that will be constructed internally
+        :type ul_frequency: float, default = `OPENTETRAPHYMAC_DEFAULT_TX_FREQUENCY`
+        :param dl_frequency: The downlink (BS->MS) frequency of the `RFCarrier` that will be constructed internally
+        :type dl_frequency: float, default = `OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY`
+        :param carrier: A premade `RFCarrier` object to be used in place of specifing the `RFCarrier` parameters,
+         refer to note above for more info.
+        :type carrier: `RFCarrier` | None, default is None
+        """
         self.channel_type = channel_type
         if carrier is None:
             self.carrier = RFCarrier(channel_number, main_carrier, ul_frequency, dl_frequency)
@@ -239,56 +387,86 @@ class PhysicalChannel:
         self.allowed_timeslots = allowed_timeslots
 
     def __repr__(self) -> str:
-        r_str = f"Physical Channel: {self.carrier.channel_number}, type: {self.channel_type},"
+        r_str = f"Physical Channel: {self.carrier.channel_number}, type: {self.channel_type.value},"
         r_str += f" main carrier?={self.carrier.main_carrier}"
         r_str += f"UL Freq.: {self.carrier.ul_frequency/1E6:.3f} MHz, DL Freq.: {self.carrier.dl_frequency/1E6:.3f}"
         r_str += f", Allowed timeslots: {self.allowed_timeslots}"
-        r_str = textwrap.fill(r_str)
         return r_str
+
+    def add_allowed_timeslot(self, timeslot: int) -> None:
+        """
+        Adds a `timeslot` int to the `allowed_timeslots` tuple for which the `PhysicalChannel` object is permitted to
+        transmit on, if already present does nothing.
+
+        :param timeslot: timeslot value for which to add the `allowed_timeslots` tuple
+        :type time_slot: int, range: [1, `TDMAFRAME_TIMESLOT_LENGTH`]
+        """
+        if timeslot not in self.allowed_timeslots:
+            if 1 <= timeslot <= TDMAFRAME_TIMESLOT_LENGTH:
+                self.allowed_timeslots = self.allowed_timeslots + (timeslot,)
+            else:
+                raise ValueError(f"The passed timeslot to be allowed for `PhysicalChannel` is: {timeslot}"
+                                 f", expected value in range: [1,{TDMAFRAME_TIMESLOT_LENGTH}]")
+
+    def remove_allowed_timeslot(self, timeslot: int) -> None:
+        """
+        Removes a `timeslot` int from the `allowed_timeslots` tuple for which the `PhysicalChannel` object is permitted
+        to transmit on, if the `timeslot` is not present, does nothing.
+
+        :param timeslot: timeslot value for which to remove from the `allowed_timeslots` tuple
+        :type time_slot: int, range: [1, `TDMAFRAME_TIMESLOT_LENGTH`]
+        """
+        if timeslot in self.allowed_timeslots:
+            if 1 <= timeslot <= TDMAFRAME_TIMESLOT_LENGTH:
+                temp = list(self.allowed_timeslots)
+                temp.remove(timeslot)
+                self.allowed_timeslots = tuple(temp)
+            else:
+                raise ValueError(f"The passed timeslot to be allowed for `PhysicalChannel` is: {timeslot}"
+                                 f", expected value in range: [1,{TDMAFRAME_TIMESLOT_LENGTH}]")
 
 ###################################################################################################
 
 
+@dataclass(order=True, slots=True, init=False)
 class Burst():
-    __slots__ = (
-        "burst_type",
-        "phy_channel",
-        "tetra_time",
-        "mixed_burst",
-        "start_ramp_period",
-        "end_ramp_period",
-        "forced"
-    )
     # class constants
-    sn_max: ClassVar[int]                   # Max number of modulation symbols in burst
-    start_guard_bit_period: ClassVar[int]     # The initial guard period / delay in bits (default)
-    end_guard_bit_period: ClassVar[int]       # The end guard period in bits (default)
-    subslot_width: ClassVar[int]                # How many subslots does the burst take up: 1 or 2
-    link_direction: ClassVar[LinkDirection]     # either DL or UL
+    sn_max: ClassVar[int]  # Max number of modulation symbols in burst
+    start_guard_bit_period: ClassVar[int]  # The initial guard period / delay in bits (default)
+    end_guard_bit_period: ClassVar[int]  # The end guard period in bits (default)
+    subslot_width: ClassVar[int]  # How many subslots does the burst take up: 1 or 2
+    link_direction: ClassVar[LinkDirection]  # either DL or UL
 
-    ALLOWED_PHY: ClassVar[set[PhyType]]         # Permissible physical channel types for the burst class
-    DEFAULT_PHY: ClassVar[PhyType]              # Just a default phy, allows for default behaviour in BurstStreamBuilder
+    ALLOWED_PHY: ClassVar[set[PhysicalChannelType]]  # Permissible physical channel types for the burst class
+    DEFAULT_PHY: ClassVar[PhysicalChannelType]  # Just a default phy, used in BurstStreamBuilder
     CONTINUITY_MODE: ClassVar[BurstContinuity]
     CONTINUITY_COMPATIBLE_BURST_TYPES: ClassVar[set[VDBurstTypes]]
     CONTINUITY_BURST_TYPE: ClassVar[VDBurstTypes]
 
     # instance variables
-    burst_type: BurstContent        # either traffic, control, or mixed
-    phy_channel: PhyType            # The physical RF channel type (CP,TP,UP) that the burst utilizes
-    mixed_burst: bool               # if the burst has 1 or more blocks/subslots stolen for control or a composite burst
-    tetra_time: TDMATime            # Timing object that tracks the tetra counters for time reference of bursts
-    start_ramp_period: int  # Variable versions of start/end_guard_bit_period
-    end_ramp_period: int    # that allow for dynamic ramping based on if we have continuous data
+    start_time: TDMATime  # Start time object for burst
+    rf_carrier: RFCarrier
+    burst_type: BurstContent = field(compare=False)  # either traffic, control, or mixed
+    phy_channel_type: PhysicalChannelType = field(compare=False)  # The physical RF channel type (CP,TP,UP)
+    mixed_burst: bool = field(compare=False)  # if the burst has traffic and control type logical channel blocks
+    start_ramp_period: int = field(compare=False)  # Variable versions of start/end_guard_bit_period
+    end_ramp_period: int = field(compare=False)    # that allow for dynamic ramping based on if we have continuous data
+    forced: bool = field(compare=False)
+
+    @property
+    def end_time(self) -> TDMATime:
+        return self.start_time + self.subslot_width
 
     def __init__(self, phy_channel: PhysicalChannel, tetra_time: TDMATime | None = None, forced: bool = False):
         if tetra_time is None:
-            self.tetra_time = TDMATime()
+            self.start_time = TDMATime()
         else:
-            self.tetra_time = tetra_time.copy()
+            self.start_time = tetra_time.copy()
         self._validate_class_constants()
         # store runtime state
+        self.rf_carrier = phy_channel.carrier
         self.burst_type = BurstContent.BURST_UNKNOWN_TYPE
-        self.phy_channel = phy_channel.channel_type
+        self.phy_channel_type = phy_channel.channel_type
         self.forced = forced
 
         # default; burst building may change later on to True
@@ -301,20 +479,20 @@ class Burst():
 
     def _validate_common(self) -> None:
         # TN range checks
-        if not 1 <= self.tetra_time.timeslot <= TDMAFRAME_TIMESLOT_LENGTH:
-            raise ValueError(f"TN {self.tetra_time.timeslot} invalid for {type(self).__name__}")
+        if not 1 <= self.start_time.timeslot <= TDMAFRAME_TIMESLOT_LENGTH:
+            raise ValueError(f"TN {self.start_time.timeslot} invalid for {type(self).__name__}")
         # FN range checks
-        if not 1 <= self.tetra_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH:
-            raise ValueError(f"FN {self.tetra_time.frame} invalid for {type(self).__name__}")
+        if not 1 <= self.start_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH:
+            raise ValueError(f"FN {self.start_time.frame} invalid for {type(self).__name__}")
         # MN range checks
-        if not 1 <= self.tetra_time.multiframe <= HYPERFRAME_MULTIFRAME_LENGTH:
-            raise ValueError(f"MN {self.tetra_time.multiframe} invalid for {type(self).__name__}")
+        if not 1 <= self.start_time.multiframe <= HYPERFRAME_MULTIFRAME_LENGTH:
+            raise ValueError(f"MN {self.start_time.multiframe} invalid for {type(self).__name__}")
         # SSN range checks depending on subslot_width
-        if not 1 <= self.tetra_time.subslot <= TIMESLOT_SUBSLOT_LENGTH:
-            raise ValueError(f"SSN {self.tetra_time.subslot} invalid for {type(self).__name__}")
+        if not 1 <= self.start_time.subslot <= TIMESLOT_SUBSLOT_LENGTH:
+            raise ValueError(f"SSN {self.start_time.subslot} invalid for {type(self).__name__}")
         # Physical channel type allowed
-        if self.phy_channel not in self.ALLOWED_PHY:
-            raise ValueError(f"Phy {self.phy_channel} invalid for {type(self).__name__}")
+        if self.phy_channel_type not in self.ALLOWED_PHY:
+            raise ValueError(f"Phy {self.phy_channel_type} invalid for {type(self).__name__}")
 
         if self.CONTINUITY_MODE == BurstContinuity.OPTIONAL or self.CONTINUITY_MODE == BurstContinuity.REQUIRED:
             if len(self.CONTINUITY_COMPATIBLE_BURST_TYPES) == 0:
@@ -349,8 +527,8 @@ class ControlUplink(Burst):
     subslot_width = 1
     link_direction = LinkDirection.UPLINK
 
-    ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL}
-    DEFAULT_PHY = PhyType.CONTROL_CHANNEL
+    ALLOWED_PHY = {PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.TRAFFIC_CHANNEL}
+    DEFAULT_PHY = PhysicalChannelType.CONTROL_CHANNEL
     CONTINUITY_MODE = BurstContinuity.ISOLATED
     CONTINUITY_COMPATIBLE_BURST_TYPES = set()
     CONTINUITY_BURST_TYPE = VDBurstTypes.CONTROL_UPLINK_BURST
@@ -358,17 +536,17 @@ class ControlUplink(Burst):
     def construct_burst_sequence(self, input_logical_ch_ssn1: SCH_HU | LogicalChannelVD) -> NDArray[uint8]:
         self.burst_type = BurstContent.BURST_CONTROL_TYPE
         # Must verify specific non-common TN/FN based on physical channel
-        if self.phy_channel == PhyType.CONTROL_CHANNEL:
-            if not 1 <= self.tetra_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
-                raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}, FN {self.tetra_time.frame}"
-                                 f" invalid for ssn{self.tetra_time.subslot}: {input_logical_ch_ssn1.channel}")
-        elif self.phy_channel == PhyType.TRAFFIC_CHANNEL:
-            if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
-                raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}, FN {self.tetra_time.frame}"
-                                 f" invalid for ssn{self.tetra_time.subslot}: {input_logical_ch_ssn1.channel}")
+        if self.phy_channel_type == PhysicalChannelType.CONTROL_CHANNEL:
+            if not 1 <= self.start_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
+                raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}, FN {self.start_time.frame}"
+                                 f" invalid for ssn{self.start_time.subslot}: {input_logical_ch_ssn1.channel}")
+        elif self.phy_channel_type == PhysicalChannelType.TRAFFIC_CHANNEL:
+            if self.start_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
+                raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}, FN {self.start_time.frame}"
+                                 f" invalid for ssn{self.start_time.subslot}: {input_logical_ch_ssn1.channel}")
         # runtime check to verify channel type
         if input_logical_ch_ssn1.channel != ChannelName.SCH_HU_CHANNEL and not self.forced:
-            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel},"
+            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type},"
                              f" invalid ssn of {input_logical_ch_ssn1.channel}")
         # Build the burst
         d = self.start_guard_bit_period
@@ -397,8 +575,8 @@ class NormalUplinkBurst(Burst):
     subslot_width = 2
     link_direction = LinkDirection.UPLINK
 
-    ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL}
-    DEFAULT_PHY = PhyType.TRAFFIC_CHANNEL
+    ALLOWED_PHY = {PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.TRAFFIC_CHANNEL}
+    DEFAULT_PHY = PhysicalChannelType.TRAFFIC_CHANNEL
     CONTINUITY_MODE = BurstContinuity.OPTIONAL
     CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.NORMAL_UPLINK_BURST}
     CONTINUITY_BURST_TYPE = VDBurstTypes.NORMAL_UPLINK_BURST
@@ -412,14 +590,14 @@ class NormalUplinkBurst(Burst):
         if input_logical_ch_bkn1.channel not in (ChannelName.TCH_2_4_CHANNEL, ChannelName.TCH_4_8_CHANNEL,
                                                  ChannelName.TCH_7_2_CHANNEL, ChannelName.TCH_S_CHANNEL,
                                                  ChannelName.SCH_F_CHANNEL, ChannelName.STCH_CHANNEL):
-            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
                              f" invalid bkn1:{input_logical_ch_bkn1.channel}")
         if (input_logical_ch_bkn2 is not None
             and input_logical_ch_bkn2.channel not in (ChannelName.TCH_2_4_CHANNEL, ChannelName.TCH_4_8_CHANNEL,
                                                       ChannelName.TCH_7_2_CHANNEL, ChannelName.TCH_S_CHANNEL,
                                                       ChannelName.STCH_CHANNEL)):
 
-            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
                              f" invalid bkn2:{input_logical_ch_bkn2.channel}")
         training_seq_index = 0  # Depending on composition of burst, we use a different training sequence either 1 or 2
 
@@ -429,28 +607,28 @@ class NormalUplinkBurst(Burst):
                 self.mixed_burst = False
                 self.burst_type = BurstContent.BURST_TRAFFIC_TYPE
                 training_seq_index = 0
-                if self.phy_channel != PhyType.TRAFFIC_CHANNEL:
-                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+                if self.phy_channel_type != PhysicalChannelType.TRAFFIC_CHANNEL:
+                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
                                      f" invalid for bkn1:{bkn1} bkn2:{bkn2} (expected TP)")
-                if not 1 <= self.tetra_time.frame < MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
-                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
-                                     f", FN {self.tetra_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
+                if not 1 <= self.start_time.frame < MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
+                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
+                                     f", FN {self.start_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
 
             case (ChannelKind.CONTROL_TYPE, None):
                 # Pure SCH/F on CP with FN:[1,18] or on TP with FN:18
                 self.mixed_burst = False
                 self.burst_type = BurstContent.BURST_CONTROL_TYPE
                 training_seq_index = 0
-                if self.phy_channel == PhyType.CONTROL_CHANNEL:
-                    if not 1 <= self.tetra_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
-                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
-                                         f", FN {self.tetra_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
-                elif self.phy_channel == PhyType.TRAFFIC_CHANNEL:
-                    if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
-                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
-                                         f", FN {self.tetra_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
+                if self.phy_channel_type == PhysicalChannelType.CONTROL_CHANNEL:
+                    if not 1 <= self.start_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
+                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
+                                         f", FN {self.start_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
+                elif self.phy_channel_type == PhysicalChannelType.TRAFFIC_CHANNEL:
+                    if self.start_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
+                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
+                                         f", FN {self.start_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
                 else:
-                    raise ValueError(f"For {self.__class__.__name__}, phy {self.phy_channel}"
+                    raise ValueError(f"For {self.__class__.__name__}, phy {self.phy_channel_type}"
                                      f", invalid for bkn1:{bkn1} bkn2:{bkn2}")
 
             case (ChannelKind.CONTROL_TYPE, ChannelKind.TRAFFIC_TYPE):
@@ -458,33 +636,33 @@ class NormalUplinkBurst(Burst):
                 self.mixed_burst = True
                 self.burst_type = BurstContent.BURST_TRAFFIC_TYPE
                 training_seq_index = 1
-                if self.phy_channel != PhyType.TRAFFIC_CHANNEL:
-                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+                if self.phy_channel_type != PhysicalChannelType.TRAFFIC_CHANNEL:
+                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
                                      f" invalid for bkn1:{bkn1} bkn2:{bkn2} (expected TP)")
-                if not 1 <= self.tetra_time.frame < MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
-                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
-                                     f", FN {self.tetra_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
+                if not 1 <= self.start_time.frame < MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
+                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
+                                     f", FN {self.start_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
 
             case (ChannelKind.CONTROL_TYPE, _):
                 if bkn2 == ChannelKind.CONTROL_TYPE:
                     if input_logical_ch_bkn2 is not None:
                         if input_logical_ch_bkn2.channel != input_logical_ch_bkn1.channel:
-                            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+                            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
                                              f" invalid combination bkn1:{bkn1} bkn2:{bkn2}")
 
                     # BKN1 and BKN2 stolen for STCH on TP with FN:[1,17]
                     self.mixed_burst = True
                     self.burst_type = BurstContent.BURST_TRAFFIC_TYPE
                     training_seq_index = 1
-                    if self.phy_channel != PhyType.TRAFFIC_CHANNEL:
-                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+                    if self.phy_channel_type != PhysicalChannelType.TRAFFIC_CHANNEL:
+                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
                                          f" invalid for bkn1:{bkn1} bkn2:{bkn2} (expected TP)")
-                    if not 1 <= self.tetra_time.frame < MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
-                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
-                                         f", FN {self.tetra_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
+                    if not 1 <= self.start_time.frame < MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
+                        raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
+                                         f", FN {self.start_time.frame} invalid for bkn1:{bkn1} bkn2:{bkn2}")
                 else:
                     # Invalid combo of channels
-                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+                    raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
                                      f" invalid for bkn1:{bkn1} bkn2:{bkn2}")
             case _:
                 # Invalid combo of channels
@@ -539,7 +717,7 @@ class NormalUplinkBurst(Burst):
 
 class DownlinkHost(Protocol):
     # host protocol for the mixin to satisfy typing for both normal and synchronous downlink mixins
-    phy_channel: PhyType
+    phy_channel: PhysicalChannelType
     tetra_time: TDMATime
     forced: bool
 
@@ -567,7 +745,7 @@ class NormalDownlinkMixin:
         match (bkn1, bkn2):
             case (ChannelKind.TRAFFIC_TYPE, None):
                 # Pure TCH on TP with FN:[1,17]
-                if self.phy_channel != PhyType.TRAFFIC_CHANNEL:
+                if self.phy_channel != PhysicalChannelType.TRAFFIC_CHANNEL:
                     raise ValueError(
                         f"For {type(self).__name__}, phy {self.phy_channel} invalid for pure TCH (expected TP). "
                         f"bkn1:{bkn1} bkn2:{bkn2}")
@@ -579,12 +757,12 @@ class NormalDownlinkMixin:
 
             case (ChannelName.SCH_F_CHANNEL, None):
                 # Pure SCH/F on CP with FN:[1,18] or on TP with FN:18
-                if self.phy_channel == PhyType.TRAFFIC_CHANNEL:
+                if self.phy_channel == PhysicalChannelType.TRAFFIC_CHANNEL:
                     if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for SCH/F on TP "
                             f"(expected control frame {CONTROL_FRAME_NUMBER}).")
-                elif self.phy_channel == PhyType.CONTROL_CHANNEL:
+                elif self.phy_channel == PhysicalChannelType.CONTROL_CHANNEL:
                     if not 1 <= self.tetra_time.frame < MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for SCH/F on CP "
@@ -596,7 +774,7 @@ class NormalDownlinkMixin:
 
             case (ChannelName.STCH_CHANNEL, ChannelKind.TRAFFIC_TYPE):
                 # BKN1 stolen for STCH on TP FN:[1,17], BKN2 as TCH
-                if self.phy_channel != PhyType.TRAFFIC_CHANNEL:
+                if self.phy_channel != PhysicalChannelType.TRAFFIC_CHANNEL:
                     raise ValueError(
                         f"For {type(self).__name__}, phy {self.phy_channel} invalid for STCH+TCH (expected TP). "
                         f"bkn1:{bkn1} bkn2:{bkn2}")
@@ -609,7 +787,7 @@ class NormalDownlinkMixin:
             case (ChannelName.STCH_CHANNEL, _):
                 if bkn2 == ChannelName.STCH_CHANNEL:
                     # BKN1 and BKN2 stolen for STCH on TP FN:[1,17]
-                    if self.phy_channel != PhyType.TRAFFIC_CHANNEL:
+                    if self.phy_channel != PhysicalChannelType.TRAFFIC_CHANNEL:
                         raise ValueError(
                             f"For {type(self).__name__}, phy {self.phy_channel} invalid for STCH+STCH (expected TP). "
                             f"bkn1:{bkn1} bkn2:{bkn2}"
@@ -624,7 +802,7 @@ class NormalDownlinkMixin:
 
             case (ChannelName.SCH_HD_CHANNEL, ChannelName.BNCH_CHANNEL):
                 # SCH/HD + BNCH on TP FN:18 or CP FN:[1,18]
-                if self.phy_channel == PhyType.TRAFFIC_CHANNEL:
+                if self.phy_channel == PhysicalChannelType.TRAFFIC_CHANNEL:
                     if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for SCH/HD+BNCH on TP "
@@ -633,7 +811,7 @@ class NormalDownlinkMixin:
                         raise ValueError(
                             f"For {type(self).__name__}, (MN+TN)%4 != 1 for SCH/HD+BNCH on TP "
                             f"(MN={self.tetra_time.multiframe}, TN={self.tetra_time.timeslot}).")
-                elif self.phy_channel == PhyType.CONTROL_CHANNEL:
+                elif self.phy_channel == PhysicalChannelType.CONTROL_CHANNEL:
                     if not 1 <= self.tetra_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for SCH/HD+BNCH on CP "
@@ -650,12 +828,12 @@ class NormalDownlinkMixin:
 
             case (ChannelName.SCH_HD_CHANNEL, ChannelName.BLCH_CHANNEL):
                 # SCH/HD + BLCH on TP FN:18 or CP/UP FN:[1,18]
-                if self.phy_channel == PhyType.TRAFFIC_CHANNEL:
+                if self.phy_channel == PhysicalChannelType.TRAFFIC_CHANNEL:
                     if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for SCH/HD+BLCH on TP "
                             f"(expected control frame {CONTROL_FRAME_NUMBER}).")
-                elif self.phy_channel in (PhyType.CONTROL_CHANNEL, PhyType.UNASGN_CHANNEL):
+                elif self.phy_channel in (PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.UNASGN_CHANNEL):
                     if not 1 <= self.tetra_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for SCH/HD+BLCH on "
@@ -668,13 +846,13 @@ class NormalDownlinkMixin:
             case (ChannelName.SCH_HD_CHANNEL, _):
                 if bkn2 == ChannelName.SCH_HD_CHANNEL:
                     # SCH/HD + SCH/HD on TP FN:18 or CP/UP FN:[1,18]
-                    if self.phy_channel == PhyType.TRAFFIC_CHANNEL:
+                    if self.phy_channel == PhysicalChannelType.TRAFFIC_CHANNEL:
                         if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
                             raise ValueError(
                                 f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for SCH/HD+SCH/HD on TP"
                                 f" (expected control frame {CONTROL_FRAME_NUMBER})."
                             )
-                    elif self.phy_channel in (PhyType.CONTROL_CHANNEL, PhyType.UNASGN_CHANNEL):
+                    elif self.phy_channel in (PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.UNASGN_CHANNEL):
                         if not 1 <= self.tetra_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
                             raise ValueError(
                                 f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for SCH/HD+SCH/HD on "
@@ -700,14 +878,15 @@ class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
 
-    ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
-    DEFAULT_PHY = PhyType.TRAFFIC_CHANNEL
+    ALLOWED_PHY = {PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.TRAFFIC_CHANNEL,
+                   PhysicalChannelType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhysicalChannelType.TRAFFIC_CHANNEL
     CONTINUITY_MODE = BurstContinuity.REQUIRED
     CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.NORMAL_DOWNLINK_BURST,
                                          VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST}
     CONTINUITY_BURST_TYPE = VDBurstTypes.NORMAL_DOWNLINK_BURST
 
-    phy_channel: PhyType
+    phy_channel: PhysicalChannelType
 
     def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH | SCH_HD | LogicalChannelVD,
                                  input_logical_ch_bbk: AACH | LogicalChannelVD,
@@ -777,13 +956,14 @@ class NormalDiscontDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
 
-    ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
-    DEFAULT_PHY = PhyType.TRAFFIC_CHANNEL
+    ALLOWED_PHY = {PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.TRAFFIC_CHANNEL,
+                   PhysicalChannelType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhysicalChannelType.TRAFFIC_CHANNEL
     CONTINUITY_MODE = BurstContinuity.ISOLATED
     CONTINUITY_COMPATIBLE_BURST_TYPES = set()
     CONTINUITY_BURST_TYPE = VDBurstTypes.NORMAL_DOWNLINK_BURST
 
-    phy_channel: PhyType
+    phy_channel: PhysicalChannelType
 
     def construct_burst_sequence(self, input_logical_ch_bkn1: TrafficChannel | SCH_F | STCH | SCH_HD | LogicalChannelVD,
                                  input_logical_ch_bbk: AACH | LogicalChannelVD,
@@ -867,7 +1047,7 @@ class SynchronousDownlinkMixin:
             case (ChannelName.BSCH_CHANNEL, ChannelName.SCH_HD_CHANNEL):
                 # BSCH in BKN1, SCH/HD (or BLCH replacing SCH/HD) in BKN2
                 # Valid on TP or CP, with control-frame timing and (MN+TN)%4==3
-                if self.phy_channel in (PhyType.TRAFFIC_CHANNEL, PhyType.CONTROL_CHANNEL):
+                if self.phy_channel in (PhysicalChannelType.TRAFFIC_CHANNEL, PhysicalChannelType.CONTROL_CHANNEL):
                     if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for phy {self.phy_channel} "
@@ -885,7 +1065,7 @@ class SynchronousDownlinkMixin:
             case (ChannelName.BSCH_CHANNEL, ChannelName.BLCH_CHANNEL):
                 # BSCH in BKN1, SCH/HD (or BLCH replacing SCH/HD) in BKN2
                 # Valid on TP or CP, with control-frame timing and (MN+TN)%4==3
-                if self.phy_channel in (PhyType.TRAFFIC_CHANNEL, PhyType.CONTROL_CHANNEL):
+                if self.phy_channel in (PhysicalChannelType.TRAFFIC_CHANNEL, PhysicalChannelType.CONTROL_CHANNEL):
                     if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for phy {self.phy_channel} "
@@ -903,7 +1083,7 @@ class SynchronousDownlinkMixin:
 
             case (ChannelName.BSCH_CHANNEL, ChannelName.BNCH_CHANNEL):
                 # BSCH in BKN1, BNCH in BKN2: only permitted on UP, FN:[1..18]
-                if self.phy_channel != PhyType.UNASGN_CHANNEL:
+                if self.phy_channel != PhysicalChannelType.UNASGN_CHANNEL:
                     raise ValueError(
                         f"For {type(self).__name__}, phy {self.phy_channel} invalid for bkn1:{bkn1} bkn2:{bkn2} "
                         f"(expected UNASGN/UP)"
@@ -917,7 +1097,7 @@ class SynchronousDownlinkMixin:
                 # SCH/HD in BKN1, BNCH in BKN2:
                 # - on TP: FN == control frame and (MN+TN)%4==1
                 # - on CP: FN:[1..18], and if FN==control frame then (MN+TN)%4==1
-                if self.phy_channel == PhyType.TRAFFIC_CHANNEL:
+                if self.phy_channel == PhysicalChannelType.TRAFFIC_CHANNEL:
                     if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
                         raise ValueError(f"For {type(self).__name__}, FN {self.tetra_time.frame}"
                                          f" invalid for TP bkn1:{bkn1} bkn2:{bkn2}")
@@ -925,7 +1105,7 @@ class SynchronousDownlinkMixin:
                         raise ValueError(
                             f"For {type(self).__name__}, (MN+TN)%4 != 1 for TP bkn1:{bkn1} bkn2:{bkn2} "
                             f"(MN={self.tetra_time.multiframe}, TN={self.tetra_time.timeslot})")
-                elif self.phy_channel == PhyType.CONTROL_CHANNEL:
+                elif self.phy_channel == PhysicalChannelType.CONTROL_CHANNEL:
                     if not 1 <= self.tetra_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
                         raise ValueError(f"For {type(self).__name__}, FN {self.tetra_time.frame}"
                                          f" invalid for CP bkn1:{bkn1} bkn2:{bkn2}")
@@ -943,11 +1123,11 @@ class SynchronousDownlinkMixin:
                 # SCH/HD in BKN1, and BKN2 is SCH/HD (or BLCH replacing it):
                 # - on TP: FN == control frame
                 # - on CP or UP: FN:[1..18]
-                if self.phy_channel == PhyType.TRAFFIC_CHANNEL:
+                if self.phy_channel == PhysicalChannelType.TRAFFIC_CHANNEL:
                     if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
                         raise ValueError(f"For {type(self).__name__}, FN {self.tetra_time.frame}"
                                          f" invalid for TP bkn1:{bkn1} bkn2:{bkn2}")
-                elif self.phy_channel in (PhyType.CONTROL_CHANNEL, PhyType.UNASGN_CHANNEL):
+                elif self.phy_channel in (PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.UNASGN_CHANNEL):
                     if not 1 <= self.tetra_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame} invalid for phy {self.phy_channel} "
@@ -963,11 +1143,11 @@ class SynchronousDownlinkMixin:
                 # SCH/HD in BKN1, and BKN2 is SCH/HD (or BLCH replacing it):
                 # - on TP: FN == control frame
                 # - on CP or UP: FN:[1..18]
-                if self.phy_channel == PhyType.TRAFFIC_CHANNEL:
+                if self.phy_channel == PhysicalChannelType.TRAFFIC_CHANNEL:
                     if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
                         raise ValueError(f"For {type(self).__name__}, FN {self.tetra_time.frame}"
                                          f" invalid for TP bkn1:{bkn1} bkn2:{bkn2}")
-                elif self.phy_channel in (PhyType.CONTROL_CHANNEL, PhyType.UNASGN_CHANNEL):
+                elif self.phy_channel in (PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.UNASGN_CHANNEL):
                     if not 1 <= self.tetra_time.frame <= MULTIFRAME_TDMAFRAME_LENGTH and not self.forced:
                         raise ValueError(
                             f"For {type(self).__name__}, FN {self.tetra_time.frame}"
@@ -990,14 +1170,15 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
 
-    ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
-    DEFAULT_PHY = PhyType.CONTROL_CHANNEL
+    ALLOWED_PHY = {PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.TRAFFIC_CHANNEL,
+                   PhysicalChannelType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhysicalChannelType.CONTROL_CHANNEL
     CONTINUITY_MODE = BurstContinuity.REQUIRED
     CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.NORMAL_DOWNLINK_BURST,
                                          VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST}
     CONTINUITY_BURST_TYPE = VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST
 
-    phy_channel: PhyType
+    phy_channel: PhysicalChannelType
 
     def construct_burst_sequence(self, input_logical_ch_sb: BSCH | SCH_HD | LogicalChannelVD,
                                  input_logical_ch_bbk: AACH | LogicalChannelVD,
@@ -1059,13 +1240,14 @@ class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
 
-    ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
-    DEFAULT_PHY = PhyType.CONTROL_CHANNEL
+    ALLOWED_PHY = {PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.TRAFFIC_CHANNEL,
+                   PhysicalChannelType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhysicalChannelType.CONTROL_CHANNEL
     CONTINUITY_MODE = BurstContinuity.ISOLATED
     CONTINUITY_COMPATIBLE_BURST_TYPES = set()
     CONTINUITY_BURST_TYPE = VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST
 
-    phy_channel: PhyType
+    phy_channel: PhysicalChannelType
 
     def construct_burst_sequence(self, input_logical_ch_sb: BSCH | SCH_HD | LogicalChannelVD,
                                  input_logical_ch_bbk: AACH | LogicalChannelVD,
@@ -1132,27 +1314,28 @@ class LinearizationUplinkBurst(Burst):
     subslot_width = 1
     link_direction = LinkDirection.UPLINK
 
-    ALLOWED_PHY = {PhyType.CONTROL_CHANNEL, PhyType.TRAFFIC_CHANNEL, PhyType.UNASGN_CHANNEL}
-    DEFAULT_PHY = PhyType.TRAFFIC_CHANNEL
+    ALLOWED_PHY = {PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.TRAFFIC_CHANNEL,
+                   PhysicalChannelType.UNASGN_CHANNEL}
+    DEFAULT_PHY = PhysicalChannelType.TRAFFIC_CHANNEL
     CONTINUITY_MODE = BurstContinuity.ISOLATED
     CONTINUITY_COMPATIBLE_BURST_TYPES = set()
     CONTINUITY_BURST_TYPE = VDBurstTypes.LINEARIZATION_BURST
 
     def construct_burst_sequence(self, input_logical_ch_ssn1: CLCH | LogicalChannelVD) -> NDArray[uint8]:
         self.burst_type = BurstContent.BURST_LINEARIZATION_TYPE
-        if self.phy_channel in (PhyType.TRAFFIC_CHANNEL, PhyType.CONTROL_CHANNEL):
-            if self.tetra_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
-                raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
-                                 f", FN {self.tetra_time.frame} invalid for ssn{self.tetra_time.subslot}"
+        if self.phy_channel_type in (PhysicalChannelType.TRAFFIC_CHANNEL, PhysicalChannelType.CONTROL_CHANNEL):
+            if self.start_time.frame != CONTROL_FRAME_NUMBER and not self.forced:
+                raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
+                                 f", FN {self.start_time.frame} invalid for ssn{self.start_time.subslot}"
                                  f": {input_logical_ch_ssn1.channel}")
-            if (self.tetra_time.multiframe + self.tetra_time.timeslot) % 4 != 3 and not self.forced:
+            if (self.start_time.multiframe + self.start_time.timeslot) % 4 != 3 and not self.forced:
                 raise ValueError(f"For {type(self).__name__}, (MN+TN)%4 != 3 for CP control frame "
-                                 f"(MN={self.tetra_time.multiframe}, TN={self.tetra_time.timeslot})")  # per 9.5.2 (74)
-        if self.tetra_time.subslot != 1 and not self.forced:
-            raise ValueError(f" For {type(self).__name__}, subslot {self.tetra_time.subslot} is invalid, expected (1)")
+                                 f"(MN={self.start_time.multiframe}, TN={self.start_time.timeslot})")  # per 9.5.2 (74)
+        if self.start_time.subslot != 1 and not self.forced:
+            raise ValueError(f" For {type(self).__name__}, subslot {self.start_time.subslot} is invalid, expected (1)")
 
         if input_logical_ch_ssn1.channel != ChannelName.CLCH_CHANNEL:
-            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel}"
+            raise ValueError(f"For {type(self).__name__}, phy {self.phy_channel_type}"
                              f", invalid ssn of {input_logical_ch_ssn1.channel}")
 
         # Build the burst

@@ -5,6 +5,7 @@ MAC and perform the appropriate CRC, interleaving, encoding, and interleaving on
 are used in phyiscal channel bursts as uplink/downlink control, traffic, broadcast, or linearization blocks/subslots
 """
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Literal, ClassVar, Self
 from numpy.random import SeedSequence, Generator, PCG64, randint
 from numpy import uint8, array, empty
@@ -20,6 +21,7 @@ LOGICAL_CH_TAIL_BITS = array([0, 0, 0, 0], uint8)  # The zero-valued tail bits a
 EMPTY_UINT8 = empty((0, 0), dtype=uint8)
 
 
+@dataclass(slots=True, init=False)
 class LogicalChannelVD(ABC):
     '''
     logical channels contain:
@@ -29,18 +31,6 @@ class LogicalChannelVD(ABC):
         2. a method to construct type-1 bits in type 1 blocks from
         type-5 recieved bits in type-5 blocks from PHY
     '''
-    __slots__ = (
-        "type_1_blocks",
-        "type_2_blocks",
-        "type_3_blocks",
-        "type_4_blocks",
-        "type_5_blocks",
-        "m",
-        "n",
-        "crc_result",
-        "seed_seq",
-        "rng_gen"
-    )
 
     # attributes contain the various types of bits, all are stored for now for analysis when needed
     type_5_blocks: NDArray[uint8]
@@ -49,9 +39,10 @@ class LogicalChannelVD(ABC):
     type_2_blocks: NDArray[uint8]
     type_1_blocks: NDArray[uint8]
 
-    channel: ClassVar[str] = ""      # Describes the written name of the logical channel
-    channel_type: ClassVar[str] = ""  # Channel type either traffic or control
-
+    channel: ClassVar[ChannelName]      # Describes the written name of the logical channel
+    channel_type: ClassVar[ChannelKind]  # Channel type either traffic or control
+    m: int
+    n: int
     k1: int            # Number of input bits per block
     k5: int            # Number of output bits per block
 
@@ -80,7 +71,7 @@ class LogicalChannelVD(ABC):
         if seed_seq is None:
             self.seed_seq = SeedSequence()
         else:
-            self.seed_seq = seed_seq
+            self.seed_seq = seed_seq.spawn(1)[0]
         self.rng_gen = Generator(PCG64(self.seed_seq))
 
     def get_type_5_block_view(self, i: int) -> Self:
@@ -92,12 +83,12 @@ class LogicalChannelVD(ABC):
 
     def generate_rnd_input(self, m: int = 1) -> NDArray[uint8]:
         """
-        Generates m-blocks of self.k1 number of type-1 bits that are random 0's and 1's stored in uint8 numpy array
+        Generates m-blocks of `k1` number of type-1 bits that are random 0's and 1's stored in a uint8 numpy array
 
         :param self: Logical channel child implementation
         :param m: Number of blocks, default is 1
         :type m: int
-        :return: k1 (depedant on specific logical ch) numpy random 0's and 1's
+        :return: `k1` (depedant on specific logical ch) number of numpy random 0's and 1's
          stored in uint8 numpy array
         :rtype: NDArray[uint8]
         """
@@ -108,7 +99,7 @@ class LogicalChannelVD(ABC):
         Validates the number of bits in the k_ type blocks of the logical channel for k=1 or 5
 
         :param self: Logical channel child implementation
-        :param k: either verifiy type_1_blocks for k=1, or type_5_blocks for k=5
+        :param k: either verifiy `type_1_blocks` for k=1, or `type_5_blocks` for k=5
         :type k: Literal[1] | Literal[5]
         """
 
@@ -146,7 +137,7 @@ class LogicalChannelVD(ABC):
         raise NotImplementedError
 
     def __str__(self) -> str:
-        return f"{self.channel}"
+        return f"{self.channel.value}"
 ###################################################################################################
 
 

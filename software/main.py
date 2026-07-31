@@ -10,6 +10,7 @@ import src.tetraphymac.transmitter as tetraTx
 import src.tetraphymac.tx_rx_utilities as tetraUtil
 import src.tetraphymac.constants as tetraConstants
 import src.tetraphymac.measurements as tetraMeas
+import src.tetraphymac.simulation_streaming as tetraStream
 
 np.random.seed(10)
 
@@ -138,12 +139,11 @@ def main():
 
     # Generate burst data
     ss = np.random.SeedSequence(12345)
-    real_seed, ideal_seed, log_ch_seed = ss.spawn(3)
-    tx_real = tetraTx.RealTransmitter(real_seed)
-    tx_ideal = tetraTx.IdealTransmitter(ideal_seed)
+    tx_real = tetraTx.RealTransmitter(ss)
+    tx_ideal = tetraTx.IdealTransmitter(ss)
 
     ul_tp_rf_channel = tetraPhy.PhysicalChannel("TP")
-    pkt_traffic_ch = tetraLch.TCH_4_8(n=4, seed_seq=log_ch_seed)
+    pkt_traffic_ch = tetraLch.TCH_4_8(n=4, seed_seq=ss)
     pkt_traffic_ch.encode_type5_bits(pkt_traffic_ch.generate_rnd_input(4))
 
     ul_tp_burst = tetraPhy.NormalUplinkBurst(ul_tp_rf_channel)
@@ -166,14 +166,26 @@ def main():
 
     print("Real digital tx ACPR results:")
     print(tetraMeas.tx_acpr_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
-
+    print()
     print("Real digital tx Wideband Noise results:")
     print(tetraMeas.tx_wideband_noise_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
 
     tetraMeas.psd_welch(rx_real, sn0, snmax, Fs2)
-    tetraMeas.psd_welch(rx_ideal, sn0, snmax, Fs2)
+    #tetraMeas.psd_welch(rx_ideal, sn0, snmax, Fs2)
 
-    
+    seed = np.random.SeedSequence(123456)
+    tetra_streamer = tetraStream.BurstStreamBuilder(rf_channels=None)
+    pkt_traffic_ch = tetraLch.TCH_4_8(n=4, seed_seq=seed)
+
+    tetra_streamer.schedule_bursts(burst_type=tetraPhy.NormalUplinkBurst,
+                                   input_logical_ch=([pkt_traffic_ch],),
+                                   allow_ms_adjacent_slot_ramp_bypass=True,
+                                   forced_scheduling=True,
+                                   fill_empty_channels=True)
+    burst_list = tetra_streamer.get_scheduled_bursts(return_all_future_bursts=True)
+    print()
+    for burst in burst_list:
+        print(burst)
     # Demonstrate .iq file saving ability
     # data = np.vstack((rx_real.real, rx_real.imag))
     # print(rx_real.size)

@@ -1168,3 +1168,7 @@ class PropagationModel:
             self.taps.append(PropagationTap(f_sim, self.f_doppler, tap, self._tap_seeds[n]))
 
 ###################################################################################################
+
+
+class ChannelSimulator:
+    pass  # Not implemented yet.

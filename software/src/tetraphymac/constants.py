@@ -11,7 +11,7 @@ from numpy import array, float64, int64
 # PHYSICAL CHANNEL CONSTANTS
 
 
-class PhyType(str, Enum):
+class PhysicalChannelType(str, Enum):
     """
     Enum class used to wrap the valid types of physical channel for a physical channel object
     """
@@ -165,8 +165,8 @@ TIMESLOT_BIT_LENGTH = 510           # How many modulation bits in a timeslot
 
 TIMESLOT_SUBSLOT_LENGTH = 2         # How many subslots in a timeslot
 
-OPENTETRAPHYMAC_DEFAULT_TX_FREQUENCY = 905.025E6
-OPENTETRAPHYMAC_DEFAULT_RX_FREQUENCY = 918.025E6
+OPENTETRAPHYMAC_DEFAULT_UL_FREQUENCY = 905.025E6
+OPENTETRAPHYMAC_DEFAULT_DL_FREQUENCY = 918.025E6
 
 # Internal sw simulator sampling rate, allows for capture of harmonics
 TETRA_TX_SIMULATION_SAMPLE_RATE = int(TX_BB_SAMPLING_FACTOR * TETRA_SYMBOL_RATE * TRANSMIT_SIMULATION_SAMPLING_FACTOR)

@@ -28,7 +28,7 @@ def makeLogicalChannel(ChannelCLs, **kwargs):
 @pytest.fixture
 def makePhysicalChannel():
     # specific frequencies and main carrier, and channel number current don't affect behaviour
-    def _mk(channel_type: bursts.PhyType):
+    def _mk(channel_type: bursts.PhysicalChannelType):
         return bursts.PhysicalChannel(
             channel_number=1,
             main_carrier=False,
