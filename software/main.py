@@ -174,15 +174,25 @@ def main():
     #tetraMeas.psd_welch(rx_ideal, sn0, snmax, Fs2)
 
     seed = np.random.SeedSequence(123456)
-    tetra_streamer = tetraStream.BurstStreamBuilder(rf_channels=None)
+    tetra_streamer = tetraStream.BurstStreamBuilder()
     pkt_traffic_ch = tetraLch.TCH_4_8(n=4, seed_seq=seed)
 
     tetra_streamer.schedule_bursts(burst_type=tetraPhy.NormalUplinkBurst,
                                    input_logical_ch=([pkt_traffic_ch],),
                                    allow_ms_adjacent_slot_ramp_bypass=True,
+                                   continuous_with_prior_blocks=True,
                                    forced_scheduling=True,
                                    fill_empty_channels=True)
-    burst_list = tetra_streamer.get_scheduled_bursts(return_all_future_bursts=True)
+
+    pkt_control_ch = tetraLch.SCH_HU(seed)
+    tetra_streamer.schedule_bursts(burst_type=tetraPhy.ControlUplink,
+                                   input_logical_ch=([pkt_control_ch],),
+                                   allow_ms_adjacent_slot_ramp_bypass=True,
+                                   continuous_with_prior_blocks=True,
+                                   forced_scheduling=True,
+                                   fill_empty_channels=True)
+    
+    burst_list = tetra_streamer.get_scheduled_bursts(return_all_future_bursts=True, increment_time_on_call=False)
     print()
     for burst in burst_list:
         print(burst)

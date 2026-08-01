@@ -52,12 +52,18 @@ class LogicalChannelVD(ABC):
     rng_gen: Generator
 
     @property
-    def has_type_5_blocks(self):
-        return False if self.type_5_blocks.size == 0 else True
+    def has_type_5_blocks(self) -> bool:
+        """
+        Returns True if the logical channels has `type_5_blocks` that are filled, else False
+        """
+        return not self.type_5_blocks.size == 0
 
     @property
-    def has_type_1_blocks(self):
-        return False if self.type_1_blocks.size == 0 else True
+    def has_type_1_blocks(self) -> bool:
+        """
+        Returns True if the logical channels has `type_1_blocks` that are filled, else False
+        """
+        return not self.type_1_blocks.size == 0
 
     def __init__(self, seed_seq: SeedSequence | None = None) -> None:
         self.type_1_blocks = EMPTY_UINT8
@@ -75,6 +81,21 @@ class LogicalChannelVD(ABC):
         self.rng_gen = Generator(PCG64(self.seed_seq))
 
     def get_type_5_block_view(self, i: int) -> Self:
+        """
+        Returns the instance but with a view of the `type_5_blocks` that only shows the block index of `i`
+        meaning if a caller says `type_5_blocks[0]` it will actually return `type_5_blocks[i]` of the original non-view
+        return instance.
+
+        This is used in burst sequence generation since burst's do not alter logical channel data but
+        only can construct 1 burst at time using the [0]'th block of the 'type_5_blocks` of a logical channel, and in
+        some cases (traffic channels only) `type_5_block` has more than 1 block of burst data because of interleaving,
+        therefore creating a usecase for generating a view into a specific block of data that will not be altered.
+
+        :param i: The logical channel block index to generate a view copy for
+        :type i: int
+        :return: Returns a the instance but with a view of having only 1 block of type 5 data specified by i
+        :rtype: Self
+        """
         view = type(self)(seed_seq=self.seed_seq)
         view.m = 1
         view.type_5_blocks = self.type_5_blocks[i:i+1]
@@ -150,9 +171,6 @@ class ControlChannel(LogicalChannelVD):
     __slots__ = ()
     channel_type = ChannelKind.CONTROL_TYPE
 
-    def __init__(self, seed_seq: SeedSequence | None = None) -> None:
-        super().__init__(seed_seq)
-
 ###################################################################################################
 
 
@@ -180,9 +198,6 @@ class BNCH(BCCH):
     k1 = 124
     k5 = 216
     channel = ChannelName.BNCH_CHANNEL
-
-    def __init__(self, seed_seq: SeedSequence | None = None):
-        super().__init__(seed_seq)
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -253,9 +268,6 @@ class BSCH(BCCH):
     k1 = 60
     k5 = 120
     channel = ChannelName.BSCH_CHANNEL
-
-    def __init__(self, seed_seq: SeedSequence | None = None):
-        super().__init__(seed_seq)
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -333,9 +345,6 @@ class SCH(ControlChannel):
     '''
     __slots__ = ()
 
-    def __init__(self, seed_seq: SeedSequence | None = None):  # pylint: disable=useless-parent-delegation
-        super().__init__(seed_seq)
-
 
 class SCH_F(SCH):  # pylint: disable=invalid-name
     '''
@@ -347,9 +356,6 @@ class SCH_F(SCH):  # pylint: disable=invalid-name
     k1 = 268
     k5 = 432
     channel = ChannelName.SCH_F_CHANNEL
-
-    def __init__(self, seed_seq: SeedSequence | None = None):
-        super().__init__(seed_seq)
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -422,9 +428,6 @@ class SCH_HD(SCH):  # pylint: disable=invalid-name
     k5 = 216
     channel = ChannelName.SCH_HD_CHANNEL
 
-    def __init__(self, seed_seq: SeedSequence | None = None):
-        super().__init__(seed_seq)
-
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
         Performs encoding of 1 block of type-1 bits in input_data_blocks into 1 block within self.type_5_blocks
@@ -494,9 +497,6 @@ class SCH_HU(SCH):  # pylint: disable=invalid-name
     k1 = 92
     k5 = 168
     channel = ChannelName.SCH_HU_CHANNEL
-
-    def __init__(self, seed_seq: SeedSequence | None = None):
-        super().__init__(seed_seq)
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -571,9 +571,6 @@ class AACH(ControlChannel):
     k5 = 30
     channel = ChannelName.AACH_CHANNEL
 
-    def __init__(self, seed_seq: SeedSequence | None = None):
-        super().__init__(seed_seq)
-
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
         Performs encoding of 1 block of type-1 bits in input_data_blocks into 1 block within self.type_5_blocks
@@ -632,9 +629,6 @@ class STCH(ControlChannel):
     k1 = 124
     k5 = 216
     channel = ChannelName.STCH_CHANNEL
-
-    def __init__(self, seed_seq: SeedSequence | None = None):
-        super().__init__(seed_seq)
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
         """
@@ -1044,9 +1038,6 @@ class LinearizationChannel(LogicalChannelVD):
     '''
     __slots__ = ()
     channel_type = ChannelKind.LINEARIZATION_TYPE
-
-    def __init__(self, seed_seq: SeedSequence | None = None):
-        super().__init__(seed_seq)
 
 
 ###################################################################################################
