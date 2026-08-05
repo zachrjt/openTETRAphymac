@@ -16,7 +16,8 @@ from numpy.typing import NDArray
 from numpy import uint8, complex128, complex64
 
 from .physical_channels import Burst, PhysicalChannel, TDMATime, RFCarrier, NormalUplinkBurst, \
-                               NormalContDownlinkBurst, SyncContDownlinkBurst
+                               NormalContDownlinkBurst, SyncContDownlinkBurst, SyncDiscontDownlinkBurst, \
+                               NormalDiscontDownlinkBurst
 from .logical_channels import LogicalChannelVD
 from .constants import StreamPosition, PhysicalChannelType, OPENTETRAPHYMAC_DEFAULT_DL_FREQUENCY, \
                        OPENTETRAPHYMAC_DEFAULT_UL_FREQUENCY, TIMESLOT_SUBSLOT_LENGTH, BurstContinuity, \
@@ -35,7 +36,8 @@ TETRA_DEFAULT_PHY_DICT = {PhysicalChannelType.CONTROL_CHANNEL: TETRA_DEFAULT_CP_
                           PhysicalChannelType.TRAFFIC_CHANNEL: TETRA_DEFAULT_TP_PHY,
                           PhysicalChannelType.UNASGN_CHANNEL: TETRA_DEFAULT_UP_PHY}
 
-TETRA_BURST_TYPES_THAT_SUPPORT_CONTINUITY = (NormalUplinkBurst, NormalContDownlinkBurst, SyncContDownlinkBurst)
+TETRA_BURST_TYPES_THAT_SUPPORT_CONTINUITY = (NormalUplinkBurst, NormalContDownlinkBurst, SyncContDownlinkBurst,
+                                             NormalDiscontDownlinkBurst, SyncDiscontDownlinkBurst)
 ###################################################################################################
 
 
@@ -315,6 +317,41 @@ class BurstStreamBuilder():
 
         return next_time
 
+    def _check_scheduled_bursts_for_collisions(self, carrier: RFCarrier,
+                                               start_time: TDMATime,
+                                               end_time: TDMATime) -> bool:
+        """
+        Given the provided `carrier`, `start_time`, and `end_time`, where `end_time` is inclusive of the duration of the
+        [-1]'th burst planned to scheduled, this function checks the already scheduled bursts in `_queue` and determines
+        if there is a collision, which is defined as when two bursts are scheduled at the same time **AND** occupy the
+        same RFCarrier
+
+        **NOTE**: This function is TETRA protocol naive, it does not verify the timing requirements of the physical
+        channel, burst type, it simply checks for if scheduled bursts will overlap in transmission time and RFCarrier
+        usage.
+
+        :param carrier: RFCarrier instance that the planned scheduled bursts will use, used to compare against scheduled
+         bursts in the `_queue` to determine if a collision (RFCarrier and Time overlap) occurs
+        :type carrier: RFCarrier
+        :param start_time: The start_time for the burst(s)
+        :type start_time: TDMATime
+        :param end_time: The end_time for the burst, should include the [-1] burst's duration such that the
+         planned burst(s) only exist within [start_time -> end_time), note that an already
+         scheduled burst can start on end_time without collision but cannot start before end_time
+        :type end_time: TDMATime
+        :return: Returns True if a burst already scheduled in `_queue` exists occupies space in between `start_time`
+         and `end_time` and has a matching `carrier` value, thus creating a collision
+        :rtype: bool
+        """
+        upper = bisect_left(self._queue, end_time, key=lambda x: x.start_time)  # index of first block.time < end_time
+        lower = bisect_left(self._queue, start_time - (TIMESLOT_SUBSLOT_LENGTH - 1), key=lambda x: x.start_time)
+        # Durations are either 1 or `TIMESLOT_SUBSLOT_LENGTH` (2 for TETRA)
+        # Therefore any burst that could overlap must start no earlier than (start_time - 1)
+        for block in reversed(self._queue[lower:upper]):
+            if block.carrier.id == carrier.id:
+                return True
+        return False
+
     @staticmethod
     def _revise_burst_ramping_to_continuous(target_block: BurstBlock) -> bool:
         """
@@ -357,44 +394,10 @@ class BurstStreamBuilder():
 
         return False
 
-    def _check_scheduled_bursts_for_collisions(self, carrier: RFCarrier,
-                                               start_time: TDMATime,
-                                               end_time: TDMATime) -> bool:
-        """
-        Given the provided `carrier`, `start_time`, and `end_time`, where `end_time` is inclusive of the duration of the
-        [-1]'th burst planned to scheduled, this function checks the already scheduled bursts in `_queue` and determines
-        if there is a collision, which is defined as when two bursts are scheduled at the same time **AND** occupy the
-        same RFCarrier
-
-        **NOTE**: This function is TETRA protocol naive, it does not verify the timing requirements of the physical
-        channel, burst type, it simply checks for if scheduled bursts will overlap in transmission time and RFCarrier
-        usage.
-
-        :param carrier: RFCarrier instance that the planned scheduled bursts will use, used to compare against scheduled
-         bursts in the `_queue` to determine if a collision (RFCarrier and Time overlap) occurs
-        :type carrier: RFCarrier
-        :param start_time: The start_time for the burst(s)
-        :type start_time: TDMATime
-        :param end_time: The end_time for the burst, should include the [-1] burst's duration such that the
-         planned burst(s) only exist within [start_time -> end_time), note that an already
-         scheduled burst can start on end_time without collision but cannot start before end_time
-        :type end_time: TDMATime
-        :return: Returns True if a burst already scheduled in `_queue` exists occupies space in between `start_time`
-         and `end_time` and has a matching `carrier` value, thus creating a collision
-        :rtype: bool
-        """
-        upper = bisect_left(self._queue, end_time, key=lambda x: x.start_time)  # index of first block.time < end_time
-        lower = bisect_left(self._queue, start_time - (TIMESLOT_SUBSLOT_LENGTH - 1), key=lambda x: x.start_time)
-        # Durations are either 1 or `TIMESLOT_SUBSLOT_LENGTH` (2 for TETRA)
-        # Therefore any burst that could overlap must start no earlier than (start_time - 1)
-        for block in reversed(self._queue[lower:upper]):
-            if block.carrier.id == carrier.id:
-                return True
-        return False
-
     def _handle_prior_contiguous_burst_continuity(self, carrier: RFCarrier, start_time: TDMATime,
                                                   burst_type: type[Burst],
-                                                  allow_ms_adjacent_slot_ramp_bypass: bool) -> bool:
+                                                  ms_adj_slot_ramp_bypass: bool,
+                                                  bs_timeshare_adj_slot_ramp_bypass: bool) -> bool:
         """
         This function handles looking for and configuring preceding bursts already scheduled in `_queue` that would
         be compatible for being continuous with subsequent planned scheduled bursts
@@ -409,16 +412,24 @@ class BurstStreamBuilder():
         :param burst_type: The type of burst being scheduled for which the function needs to identify and attempt to
          make any preceding scheduled burst in `_queue` continuous with if their types are compatible
         :type burst_type: type[Burst]
-        :param allow_ms_adjacent_slot_ramp_bypass: A bool, True if the MS/transmitter is in multi-slot transmission mode
+        :param ms_adj_slot_ramp_bypass: A bool, True if the MS/transmitter is in multi-slot transmission mode
          and wishes to not ramp up between contiguous MS Normal Uplink Bursts, False is otherwise.
-        :type allow_ms_adjacent_slot_ramp_bypass: bool
+        :type ms_adj_slot_ramp_bypass: bool
         :return: Returns True if the function determines and then sucessfully configures a preceding contiguous
          scheduled block in `_queue` to be continuous with the planned subsequent block, False otherwise
         :rtype: bool
         """
         # 1. Check if we allow for continuous bursts with our current burst_type before anything else
-        if burst_type.CONTINUITY_MODE == BurstContinuity.ISOLATED or (
-         burst_type.CONTINUITY_MODE == BurstContinuity.OPTIONAL and not allow_ms_adjacent_slot_ramp_bypass):
+        rtrn_early = False
+        if burst_type.CONTINUITY_MODE == BurstContinuity.ISOLATED:
+            rtrn_early = True
+        elif burst_type.CONTINUITY_MODE == BurstContinuity.OPTIONAL:
+            if (not ms_adj_slot_ramp_bypass) and burst_type == NormalUplinkBurst:
+                rtrn_early = True
+            elif (not bs_timeshare_adj_slot_ramp_bypass) and (burst_type in (SyncDiscontDownlinkBurst,
+                                                                             NormalDiscontDownlinkBurst)):
+                rtrn_early = True
+        if rtrn_early:
             return False
         # 2. Determine if there is a preceding burst that is adjacent in end_time to our burst and has same carrier
         lower = bisect_left(self._queue, (start_time - TIMESLOT_SUBSLOT_LENGTH), key=lambda x: x.start_time)
@@ -443,7 +454,11 @@ class BurstStreamBuilder():
                 if compatible:
                     return self._revise_burst_ramping_to_continuous(preceding_block)
             case BurstContinuity.OPTIONAL:
-                if allow_ms_adjacent_slot_ramp_bypass:
+                if ms_adj_slot_ramp_bypass and burst_type == NormalUplinkBurst:
+                    if compatible:
+                        return self._revise_burst_ramping_to_continuous(preceding_block)
+                elif bs_timeshare_adj_slot_ramp_bypass and (burst_type in (SyncDiscontDownlinkBurst,
+                                                                           NormalDiscontDownlinkBurst)):
                     if compatible:
                         return self._revise_burst_ramping_to_continuous(preceding_block)
             case BurstContinuity.ISOLATED:
@@ -455,7 +470,8 @@ class BurstStreamBuilder():
                                     input_logical_ch: tuple[list[LogicalChannelVD | None], ...],
                                     phy_channel: PhysicalChannel | None,
                                     start_time: TDMATime | None, *,
-                                    allow_ms_adjacent_slot_ramp_bypass: bool,
+                                    ms_adj_slot_ramp_bypass: bool,
+                                    bs_timeshare_adj_slot_ramp_bypass: bool,
                                     continuous_with_prior_blocks: bool,
                                     forced_scheduling: bool,
                                     fill_empty_channels: bool) -> list[BurstBlock] | None:
@@ -482,11 +498,13 @@ class BurstStreamBuilder():
                     if not ch_list.has_type_5_blocks:
                         # Since there is no bits ready for burst block insertion, generate the data
                         if fill_empty_channels:
+                            # print(f"Pre-filled empty block is shape: {ch_list.type_5_blocks.shape}")
                             ch_list.encode_type5_bits(ch_list.generate_rnd_input(1))
+                            # print(f"Filled empty block is shape: {ch_list.type_5_blocks.shape}")
                         else:
                             raise ValueError(f"Passed logical channel to BurstScheduler: {ch_list}, has no type 5 bits")
                     stream_lengths[i] += ch_list.type_5_blocks.shape[0]
-
+        # print(f"Stream length: {max(stream_lengths)}")
         if not stream_lengths:
             return None
         output_length = max(stream_lengths)
@@ -501,7 +519,7 @@ class BurstStreamBuilder():
         if start_time is None:
             start_time = self._next_available_time_for_carrier(phy_channel.carrier, burst_type.subslot_width)
         else:
-            if start_time > self.current_tetra_time:
+            if start_time < self.current_tetra_time:
                 raise ValueError(f"Passed time to BurstStreamBuilder is in past: {start_time}"
                                  f" compared to current Builder time: {self.current_tetra_time}")
             end_time = start_time + ((output_length - 1) * TIMESLOT_SUBSLOT_LENGTH) + burst_type.subslot_width
@@ -545,12 +563,19 @@ class BurstStreamBuilder():
             block_1_cont_with_prior = self._handle_prior_contiguous_burst_continuity(phy_channel.carrier,
                                                                                      start_time,
                                                                                      burst_type,
-                                                                                     allow_ms_adjacent_slot_ramp_bypass)
+                                                                                     ms_adj_slot_ramp_bypass,
+                                                                                     bs_timeshare_adj_slot_ramp_bypass)
         else:
             block_1_cont_with_prior = False
 
-        if burst_type.CONTINUITY_MODE == BurstContinuity.OPTIONAL and allow_ms_adjacent_slot_ramp_bypass:
-            burst_blocks_continuous = True
+        if burst_type.CONTINUITY_MODE == BurstContinuity.OPTIONAL:
+            if burst_type == NormalUplinkBurst and ms_adj_slot_ramp_bypass:
+                burst_blocks_continuous = True
+            elif ((burst_type in (SyncDiscontDownlinkBurst, NormalDiscontDownlinkBurst))
+                  and bs_timeshare_adj_slot_ramp_bypass):
+                burst_blocks_continuous = True
+            else:
+                burst_blocks_continuous = False
         elif burst_type.CONTINUITY_MODE == BurstContinuity.REQUIRED:
             burst_blocks_continuous = True
         else:
@@ -679,7 +704,8 @@ class BurstStreamBuilder():
                         input_logical_ch: tuple[list[LogicalChannelVD | None], ...],
                         phy_channel: PhysicalChannel | None = None,
                         start_time: TDMATime | None = None, *,
-                        allow_ms_adjacent_slot_ramp_bypass: bool = False,
+                        ms_adj_slot_ramp_bypass: bool = False,
+                        bs_timeshare_adj_slot_ramp_bypass: bool = False,
                         continuous_with_prior_blocks: bool = True,
                         forced_scheduling: bool = False,
                         fill_empty_channels: bool = False) -> None:
@@ -731,10 +757,15 @@ class BurstStreamBuilder():
          with the same carrier are scheduled, returns schedules the start time of the burst(s) to be at
          `current_tetra_time`
         :type start_time: TDMATime | None, default None
-        :param allow_ms_adjacent_slot_ramp_bypass: Boolean, True if an MS has support for multi-slot uplink transmission
-         ,that is transmitting on adjacent timeslots, and wishes to not ramp power up and down between subsequent
-         timeslots, default False, **NOTE**: only affects NormalUplinkBursts that scheduled consecutively
-        :type allow_ms_adjacent_slot_ramp_bypass: bool, default False
+        :param ms_adj_slot_ramp_bypass: Boolean, True if an MS has support for multi-slot uplink transmission
+         ,that is transmitting on **adjacent** timeslots, and wishes to not ramp power up and down between subsequent
+         timeslots, default False, **NOTE**: only affects `NormalUplinkBurst`'s that scheduled consecutively
+        :type ms_adj_slot_ramp_bypass: bool, default False
+        :param bs_timeshare_adj_slot_ramp_bypass: Boolean, True if an BS in BS timesharing transmission mode chooses to
+         not ramp between **adjacent/subsequent** timeslots
+         timeslots, default False, **NOTE**: only affects `NormalDiscontDownlinkBurst` and `SyncDiscontDownlinkBurst`
+         burst types
+        :type bs_timeshare_adj_slot_ramp_bypass: bool, default False
         :param continuous_with_prior_blocks: Boolean, True if the caller wants allow for checking and reconfiguration
          of already scheduled compatible preceding bursts to be continuous with the current bursts, **NOTE**: only
          applies to bursts that support continuous bursts (no ramping up/down between timeslots) and ones whoose burst
@@ -754,7 +785,8 @@ class BurstStreamBuilder():
 
         # 1. Generate burst block list
         blocks = self._construct_burst_block_list(burst_type, input_logical_ch, phy_channel, start_time,
-                                                  allow_ms_adjacent_slot_ramp_bypass=allow_ms_adjacent_slot_ramp_bypass,
+                                                  ms_adj_slot_ramp_bypass=ms_adj_slot_ramp_bypass,
+                                                  bs_timeshare_adj_slot_ramp_bypass=bs_timeshare_adj_slot_ramp_bypass,
                                                   continuous_with_prior_blocks=continuous_with_prior_blocks,
                                                   forced_scheduling=forced_scheduling,
                                                   fill_empty_channels=fill_empty_channels)

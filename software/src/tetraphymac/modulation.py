@@ -35,7 +35,7 @@ def calculate_phase_adjustment_bits(input_data: NDArray[uint8],
         raise ValueError(f"Number of input burst bits is: {input_data.size}, expected even number")
 
     # reshape to have even and odd bits [b0, b1], also skip the first guardOffset bits to get to data
-    bit_pairs = input_data[guard_start_offset:]
+    bit_pairs = input_data[guard_start_offset:].copy()
     bit_pairs = bit_pairs[inclusive_indices[0]*2:(inclusive_indices[1]*2)+2].reshape(-1, 2)
 
     # map the even odd bits into a 4-entry code to map phase transistion quickly from LUT

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Literal, ClassVar, Self
 from numpy.random import SeedSequence, Generator, PCG64, randint
 from numpy import uint8, array, empty
+
 from numpy.typing import NDArray
 
 from .constants import SlotLength, ChannelKind, ChannelName
@@ -197,6 +198,7 @@ class BNCH(BCCH):
 
     k1 = 124
     k5 = 216
+    n = 1
     channel = ChannelName.BNCH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
@@ -267,6 +269,7 @@ class BSCH(BCCH):
     __slots__ = ()
     k1 = 60
     k5 = 120
+    n = 1
     channel = ChannelName.BSCH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
@@ -355,6 +358,7 @@ class SCH_F(SCH):  # pylint: disable=invalid-name
     __slots__ = ()
     k1 = 268
     k5 = 432
+    n = 1
     channel = ChannelName.SCH_F_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
@@ -426,6 +430,7 @@ class SCH_HD(SCH):  # pylint: disable=invalid-name
     __slots__ = ()
     k1 = 124
     k5 = 216
+    n = 1
     channel = ChannelName.SCH_HD_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
@@ -496,6 +501,7 @@ class SCH_HU(SCH):  # pylint: disable=invalid-name
     __slots__ = ()
     k1 = 92
     k5 = 168
+    n = 1
     channel = ChannelName.SCH_HU_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
@@ -569,6 +575,7 @@ class AACH(ControlChannel):
     __slots__ = ()
     k1 = 14
     k5 = 30
+    n = 1
     channel = ChannelName.AACH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
@@ -628,6 +635,7 @@ class STCH(ControlChannel):
     __slots__ = ()
     k1 = 124
     k5 = 216
+    n = 1
     channel = ChannelName.STCH_CHANNEL
 
     def encode_type5_bits(self, input_data_blocks: NDArray[uint8]):
@@ -980,8 +988,8 @@ class TCH_2_4(TrafficChannel):  # pylint: disable=invalid-name
         self.type_1_blocks = input_data_blocks
         self.validate_k_length(1)
 
-        self.type_2_blocks = empty(shape=((self.m+self.n-1), 148), dtype=uint8)
-        self.type_3_blocks = empty(shape=((self.m+self.n-1), 432), dtype=uint8)
+        self.type_2_blocks = empty(shape=((self.m), 148), dtype=uint8)
+        self.type_3_blocks = empty(shape=((self.m), 432), dtype=uint8)
         for i in range(self.m):
             self.type_2_blocks[i][:-4] = self.type_1_blocks[i]
             self.type_2_blocks[i][-4:] = LOGICAL_CH_TAIL_BITS
@@ -1050,6 +1058,7 @@ class CLCH(LinearizationChannel):
     __slots__ = ()
     k1 = 206
     k5 = 206
+    n = 1
     channel = ChannelName.CLCH_CHANNEL
 
     def __init__(self, seed_seq: SeedSequence | None = None):
@@ -1096,6 +1105,7 @@ class BLCH(LinearizationChannel):
     __slots__ = ()
     k1 = 216
     k5 = 216
+    n = 1
     channel = ChannelName.BLCH_CHANNEL
 
     def __init__(self, seed_seq: SeedSequence | None = None):

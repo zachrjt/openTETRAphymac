@@ -83,7 +83,7 @@ def test_normal_cont_downlink_valid(makePhysicalChannel, name, phy, time, bkn1_f
 
     burst = bursts.NormalContDownlinkBurst(phy_obj, time)
     out = burst.construct_burst_sequence(bkn1, bbk, bkn2, ramp_up_down_state=(False, False))
-    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
+    assert len(out) == (burst.sn_max * 2) + burst.start_ramp_period + burst.end_ramp_period
 
 
 @pytest.mark.parametrize("name,phy,time,bkn1_fn,bkn2_fn", NORMAL_VALID, ids=lambda x: x if isinstance(x, str) else None)
@@ -97,7 +97,8 @@ def test_normal_discont_downlink_valid(makePhysicalChannel, name, phy, time, bkn
 
     burst = bursts.NormalDiscontDownlinkBurst(phy_obj, time)
     out = burst.construct_burst_sequence(bkn1, bbk, bkn2, ramp_up_down_state=(False, False))
-    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
+    # So the metric we compare against is a bit different because yes, the base SNmax of the burst does not encode the correct length
+    assert len(out) == (burst.sn_max * 2) + (burst.start_guard_bit_period + burst.end_guard_bit_period + burst.start_ramp_period + burst.end_ramp_period)
 
 
 @pytest.mark.parametrize("name,phy,time,bkn1_fn,bkn2_fn", NORMAL_INVALID, ids=lambda x: x if isinstance(x, str) else None)
@@ -181,7 +182,7 @@ def test_sync_cont_downlink_valid(makePhysicalChannel, name, phy, time, SBcls, B
 
     out = burst.construct_burst_sequence(sb, bbk, bkn2, ramp_up_down_state=(False, False))
 
-    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
+    assert len(out) == (burst.sn_max * 2) + burst.start_ramp_period + burst.end_ramp_period
 
     # Synchronous downlink anchor: FREQ correction [14:94]
     assert np.array_equal(out[14:94], bursts.FREQUENCY_CORRECTION_FIELD)
@@ -198,8 +199,9 @@ def test_sync_discont_downlink_valid(makePhysicalChannel, name, phy, time, SBcls
     bkn2 = makeLogicalChannel(BKN2cls)
 
     out = burst.construct_burst_sequence(sb, bbk, bkn2, ramp_up_down_state=(False, False))
-
-    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
+    # Note that while in BS timesharing tranmission mode adjancent discontinous bursts need not ramp up/down
+    # So the metric we compare against is a bit different because yes, the base SNmax of the burst does not encode the correct length
+    assert len(out) == (burst.sn_max * 2) + (burst.start_guard_bit_period + burst.end_guard_bit_period + burst.start_ramp_period + burst.end_ramp_period)
 
     # Synchronous downlink anchor: FREQ correction [14:94]
     assert np.array_equal(out[14:94], bursts.FREQUENCY_CORRECTION_FIELD)
@@ -281,9 +283,9 @@ def test_control_uplink_valid(makePhysicalChannel, name, phy, time):
     sch_hu = makeLogicalChannel(lc.SCH_HU)  # must produce type_5_blocks[0] length >= 168
     out = burst.construct_burst_sequence(sch_hu)
 
-    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
+    assert len(out) == (burst.sn_max * 2) + burst.start_ramp_period + burst.end_ramp_period
     # quick structural anchors
-    d = burst.start_guard_bit_period
+    d = burst.start_ramp_period
     assert np.array_equal(out[d:d+4], bursts.TAIL_BITS)
     assert np.array_equal(out[d+88:d+118], bursts.EXTENDED_TRAINING_SEQUENCE)
     assert np.array_equal(out[d+202:d+206], bursts.TAIL_BITS)
@@ -374,9 +376,9 @@ def test_normal_uplink_valid(makePhysicalChannel, name, phy, time, BKN1cls, BKN2
         bkn2 = makeLogicalChannel(BKN2cls)
 
     out = burst.construct_burst_sequence(bkn1, bkn2, ramp_up_down_state=(True, True))
-    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
+    assert len(out) == (burst.sn_max * 2) + burst.start_ramp_period + burst.end_ramp_period
 
-    d = burst.start_guard_bit_period
+    d = burst.start_ramp_period
     assert np.array_equal(out[d:d+4], bursts.TAIL_BITS)
     assert np.array_equal(out[d+220:d+242], bursts.NORMAL_TRAINING_SEQUENCE[0]) or np.array_equal(out[d+220:d+242], bursts.NORMAL_TRAINING_SEQUENCE[1])
     assert np.array_equal(out[d+458:d+462], bursts.TAIL_BITS)
@@ -433,9 +435,9 @@ def test_linearization_uplink_valid(makePhysicalChannel, name, phy, time, LCcls)
     ch = makeLogicalChannel(LCcls)
     out = burst.construct_burst_sequence(ch)
 
-    assert len(out) == (burst.sn_max * 2) + burst.start_guard_bit_period + burst.end_guard_bit_period
+    assert len(out) == (burst.sn_max * 2) + burst.start_ramp_period + burst.end_ramp_period
 
-    d = burst.start_guard_bit_period
+    d = burst.start_ramp_period
     # payload region should be exactly the CLCH bits
     assert np.array_equal(out[d:d+206], np.array(ch.type_5_blocks[0][:206], dtype=np.uint8))
 

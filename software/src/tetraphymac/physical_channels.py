@@ -10,8 +10,6 @@ during initilization and the current `TDMATime` in terms of timeslot, frame, mul
 It then constructs the 510 modulation bits for the burst using the logical channel data and training sequences,
 phase adjustment bits, etc.
 
-The returned modulation bits are ready to be fed into a RFTransmitter class alongside the start_ramp_period and
-end_ramp_periods.
 """
 from typing import ClassVar, Protocol, Self
 from dataclasses import dataclass, field
@@ -886,11 +884,11 @@ class NormalDownlinkMixin:
 ###################################################################################################
 
 
-class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
+class NormalContDownlinkBurst(NormalDownlinkMixin, Burst):
     __slots__ = ()
     sn_max = 255
-    start_guard_bit_period = 0
-    end_guard_bit_period = 0
+    start_guard_bit_period = 12
+    end_guard_bit_period = 10
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
 
@@ -898,9 +896,9 @@ class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
                    PhysicalChannelType.UNASGN_CHANNEL}
     DEFAULT_PHY = PhysicalChannelType.TRAFFIC_CHANNEL
     CONTINUITY_MODE = BurstContinuity.REQUIRED
-    CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.NORMAL_DOWNLINK_BURST,
-                                         VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST}
-    CONTINUITY_BURST_TYPE = VDBurstTypes.NORMAL_DOWNLINK_BURST
+    CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.CONT_NORMAL_DOWNLINK_BURST,
+                                         VDBurstTypes.CONT_SYNCH_DOWNLINK_BURST}
+    CONTINUITY_BURST_TYPE = VDBurstTypes.CONT_NORMAL_DOWNLINK_BURST
 
     phy_channel_type: PhysicalChannelType
 
@@ -926,8 +924,8 @@ class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
         burst_bit_seq = empty(shape=(self.sn_max*2), dtype=uint8)
         if ramp_up_down_state[0]:
             # if we are ramp up (TRUE), it means that this is the first burst
-            burst_bit_seq[:12] = zeros(shape=12, dtype=uint8)
-            self.start_ramp_period = 12
+            burst_bit_seq[:12] = zeros(shape=self.start_guard_bit_period, dtype=uint8)
+            self.start_ramp_period = self.start_guard_bit_period
         else:
             # other we are continuous (or we are ramping down add preceding bits per 9.4.5.1 - Table 28)
             burst_bit_seq[:12] = NORMAL_TRAINING_SEQUENCE[2][10:22]
@@ -945,8 +943,8 @@ class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
         # temporarily skip phase adjustment bits b - [498:500]
         if ramp_up_down_state[1]:
             # if we are ramp down (TRUE), it means that this is the last burst we are ramping down
-            burst_bit_seq[500:510] = zeros(shape=10, dtype=uint8)
-            self.end_ramp_period = 10
+            burst_bit_seq[500:510] = zeros(shape=self.end_guard_bit_period, dtype=uint8)
+            self.end_ramp_period = self.end_guard_bit_period
         else:
             # otherwise we are continuous (or we are have ramped up add preceding bits per 9.4.5.1 - Table 27)
             burst_bit_seq[500:510] = NORMAL_TRAINING_SEQUENCE[2][0:10]
@@ -964,7 +962,7 @@ class NormalContDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
 ###################################################################################################
 
 
-class NormalDiscontDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
+class NormalDiscontDownlinkBurst(NormalDownlinkMixin, Burst):
     __slots__ = ()
     sn_max = 246
     start_guard_bit_period = 10
@@ -975,9 +973,10 @@ class NormalDiscontDownlinkBurst(NormalDownlinkMixin, DownlinkHost, Burst):
     ALLOWED_PHY = {PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.TRAFFIC_CHANNEL,
                    PhysicalChannelType.UNASGN_CHANNEL}
     DEFAULT_PHY = PhysicalChannelType.TRAFFIC_CHANNEL
-    CONTINUITY_MODE = BurstContinuity.ISOLATED
-    CONTINUITY_COMPATIBLE_BURST_TYPES = set()
-    CONTINUITY_BURST_TYPE = VDBurstTypes.NORMAL_DOWNLINK_BURST
+    CONTINUITY_MODE = BurstContinuity.OPTIONAL
+    CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.DISCONT_NORMAL_DOWNLINK_BURST,
+                                         VDBurstTypes.DISCONT_SYNCH_DOWNLINK_BURST}
+    CONTINUITY_BURST_TYPE = VDBurstTypes.DISCONT_NORMAL_DOWNLINK_BURST
 
     phy_channel_type: PhysicalChannelType
 
@@ -1178,11 +1177,11 @@ class SynchronousDownlinkMixin:
 ###################################################################################################
 
 
-class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
+class SyncContDownlinkBurst(SynchronousDownlinkMixin, Burst):
     __slots__ = ()
     sn_max = 255
-    start_guard_bit_period = 0
-    end_guard_bit_period = 0
+    start_guard_bit_period = 12
+    end_guard_bit_period = 10
     subslot_width = 2
     link_direction = LinkDirection.DOWNLINK
 
@@ -1190,9 +1189,9 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
                    PhysicalChannelType.UNASGN_CHANNEL}
     DEFAULT_PHY = PhysicalChannelType.CONTROL_CHANNEL
     CONTINUITY_MODE = BurstContinuity.REQUIRED
-    CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.NORMAL_DOWNLINK_BURST,
-                                         VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST}
-    CONTINUITY_BURST_TYPE = VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST
+    CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.CONT_NORMAL_DOWNLINK_BURST,
+                                         VDBurstTypes.CONT_SYNCH_DOWNLINK_BURST}
+    CONTINUITY_BURST_TYPE = VDBurstTypes.CONT_SYNCH_DOWNLINK_BURST
 
     phy_channel_type: PhysicalChannelType
 
@@ -1215,7 +1214,7 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
         if ramp_up_down_state[0]:
             # if we are ramp up (TRUE), it means that this is the first burst
             burst_bit_seq[:12] = zeros(shape=self.start_guard_bit_period, dtype=uint8)
-            self.start_ramp_period = 12
+            self.start_ramp_period = self.end_guard_bit_period
         else:
             # other we are continuous (or we are ramping down add preceding bits per 9.4.5.1 - Table 28)
             burst_bit_seq[:12] = NORMAL_TRAINING_SEQUENCE[2][10:22]
@@ -1231,7 +1230,7 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
         if ramp_up_down_state[1]:
             # if we are ramp down (TRUE), it means that this is the last burst we are ramping down
             burst_bit_seq[500:510] = zeros(shape=self.end_guard_bit_period, dtype=uint8)
-            self.end_ramp_period = 10
+            self.end_ramp_period = self.end_guard_bit_period
         else:
             # otherwise we are continuous (or we are have ramped up add preceding bits per 9.4.5.1 - Table 27)
             burst_bit_seq[500:510] = NORMAL_TRAINING_SEQUENCE[2][0:10]
@@ -1248,7 +1247,7 @@ class SyncContDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
 ###################################################################################################
 
 
-class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
+class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, Burst):
     __slots__ = ()
     sn_max = 246
     start_guard_bit_period = 10
@@ -1259,9 +1258,10 @@ class SyncDiscontDownlinkBurst(SynchronousDownlinkMixin, DownlinkHost, Burst):
     ALLOWED_PHY = {PhysicalChannelType.CONTROL_CHANNEL, PhysicalChannelType.TRAFFIC_CHANNEL,
                    PhysicalChannelType.UNASGN_CHANNEL}
     DEFAULT_PHY = PhysicalChannelType.CONTROL_CHANNEL
-    CONTINUITY_MODE = BurstContinuity.ISOLATED
-    CONTINUITY_COMPATIBLE_BURST_TYPES = set()
-    CONTINUITY_BURST_TYPE = VDBurstTypes.SYNCHRONIZATION_DOWNLINK_BURST
+    CONTINUITY_MODE = BurstContinuity.OPTIONAL
+    CONTINUITY_COMPATIBLE_BURST_TYPES = {VDBurstTypes.DISCONT_NORMAL_DOWNLINK_BURST,
+                                         VDBurstTypes.DISCONT_SYNCH_DOWNLINK_BURST}
+    CONTINUITY_BURST_TYPE = VDBurstTypes.DISCONT_SYNCH_DOWNLINK_BURST
 
     phy_channel_type: PhysicalChannelType
 

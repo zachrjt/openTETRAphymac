@@ -167,7 +167,7 @@ def main():
     print("Real digital tx ACPR results:")
     print(tetraMeas.tx_acpr_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
     print()
-    print("Real digital tx Wideband Noise results:")
+    print("Real digita tx Wideband Noise results:")
     print(tetraMeas.tx_wideband_noise_measurement(rx_real.astype(np.complex64), sn0, snmax, Fs2))
 
     tetraMeas.psd_welch(rx_real, sn0, snmax, Fs2)
@@ -179,7 +179,7 @@ def main():
 
     tetra_streamer.schedule_bursts(burst_type=tetraPhy.NormalUplinkBurst,
                                    input_logical_ch=([pkt_traffic_ch],),
-                                   allow_ms_adjacent_slot_ramp_bypass=True,
+                                   ms_adj_slot_ramp_bypass=True,
                                    continuous_with_prior_blocks=True,
                                    forced_scheduling=True,
                                    fill_empty_channels=True)
@@ -187,7 +187,7 @@ def main():
     pkt_control_ch = tetraLch.SCH_HU(seed)
     tetra_streamer.schedule_bursts(burst_type=tetraPhy.ControlUplink,
                                    input_logical_ch=([pkt_control_ch],),
-                                   allow_ms_adjacent_slot_ramp_bypass=True,
+                                   ms_adj_slot_ramp_bypass=True,
                                    continuous_with_prior_blocks=True,
                                    forced_scheduling=True,
                                    fill_empty_channels=True)
